@@ -1,4 +1,5 @@
 #include "finte/finte.h"
+#include "hal_x86.h"
 #include "vga.h"
 #include "fb.h"
 #include "input.h"
@@ -359,7 +360,7 @@ void hal_init(void)
     g_cpus[0].self = &g_cpus[0];
     g_cpus[0].id = 0;
     g_cpus[0].online = 1;
-    g_cpus[0].timer_kind = 0;
+    g_cpus[0].timer_mode = FINTE_TIMER_NONE;
     g_cpu_count = 1;
     hal_cpu_install(&g_cpus[0]);
     g_active[0] = &g_sched[0];
@@ -628,7 +629,7 @@ fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes)
     ctx->impl = ctx;
     ctx->stack = stack;
     ctx->stack_size = stack_bytes;
-    ctx->cr3 = 0;
+    ctx->addr_space = 0;
 
     uintptr_t top = ((uintptr_t)stack + stack_bytes) & ~(uintptr_t)15;
     uint64_t *sp = (uint64_t *)(top - 64);
@@ -640,7 +641,7 @@ fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes)
     sp[5] = 0;
     sp[6] = 0;
     sp[7] = (uint64_t)(uintptr_t)kx_trampoline;
-    ctx->rsp = (uint64_t)(uintptr_t)sp;
+    ctx->sp = (uint64_t)(uintptr_t)sp;
     return ctx;
 }
 
@@ -682,10 +683,10 @@ void hal_ctx_switch(fhal_ctx_t *from, fhal_ctx_t *to)
     if (to->stack && to->stack_size) {
         hal_user_bind_stack((uint8_t *)to->stack + to->stack_size);
     }
-    if (to->cr3) {
-        __asm__ volatile("mov %0, %%cr3" : : "r"(to->cr3) : "memory");
+    if (to->addr_space) {
+        __asm__ volatile("mov %0, %%cr3" : : "r"(to->addr_space) : "memory");
     }
-    kx_switch(&from->rsp, to->rsp);
+    kx_switch(&from->sp, to->sp);
 }
 
 void finte_hal_bootstrap(void)

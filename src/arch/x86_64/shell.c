@@ -1375,8 +1375,8 @@ static void cmd_smp(const sh_ctx_t *ctx)
         if (!cpu || !cpu->online) {
             continue;
         }
-        sh_printf("cpu%u apic=%u ticks=%llu ipis=%llu switches=%llu %s\n",
-                  (unsigned)i, (unsigned)cpu->apic_id,
+        sh_printf("cpu%u hwid=%u ticks=%llu ipis=%llu switches=%llu %s\n",
+                  (unsigned)i, (unsigned)cpu->hw_id,
                   (unsigned long long)cpu->ticks,
                   (unsigned long long)cpu->ipis,
                   (unsigned long long)cpu->switches,

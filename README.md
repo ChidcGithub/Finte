@@ -35,6 +35,7 @@ Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own 
 - **Startup performance**: the GOP console draws glyphs with packed 64-bit stores and skips clearing rows that are already blank. With serial disabled, the BIOS path reaches the shell in about 0.8 seconds; UEFI wall time is dominated by OVMF firmware.
 - **Isolated user processes**: `user`, `procs` and `services` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code, data and page-scoped arena window; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, page-level arena caps, and process-kill on a kernel-memory fault.
 - **3-strike watchdog**: unexpected user faults, scheduler deadlocks and disk-sync failures add a strike. On the third, the kernel prints a red panic and powers off. `selfcheck` and the expected `procs` fault are excluded. `watchdog` shows the state, `watchdog test` injects a strike, and `watchdog reset` clears it.
+- **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; an arm64 QEMU `virt` backend uses PL011, the generic counter, PSCI and the same scheduler. `make arm64-test` runs all 147 core checks under `qemu-system-aarch64`.
 - **Ring 3 / ELF64**: `user` loads `init.elf` from the initrd as an isolated process, enters CPL3 through a GDT/TSS and `int 0x80` gate, and returns to the shell when the process exits.
 - **Firmware input and storage**: UEFI ConIn provides USB-HID keyboard input; firmware Block I/O reaches NVMe and USB storage alongside native SATA.
 - Runs the **same producer/transform/sink pipeline** in the host simulator and on the metal image.
@@ -77,6 +78,9 @@ make qemu-uefi-disk-test # UEFI + AHCI + three filesystems
 make demo           # host-side native pipeline
 make compat         # host-side Linux persona
 make bench          # host microbenchmarks
+make arm64          # arm64 QEMU virt kernel (build/finte-arm64.elf)
+make arm64-test     # boot arm64 and verify the 147 core checks
+make qemu-arm64     # interactive arm64 serial console
 python3 tools/lfc1ck.py build/disk-test.img --list
 ```
 
@@ -355,10 +359,10 @@ shows each flow's assigned CPU, and `smp` shows the per-CPU scheduler:
 ```text
 finte> smp
 cpus: 4 online
-cpu0 apic=0 ticks=183 ipis=0 switches=25 idle
-cpu1 apic=3 ticks=9 ipis=6 switches=10 idle
-cpu2 apic=1 ticks=55 ipis=6 switches=58 idle
-cpu3 apic=2 ticks=49 ipis=5 switches=51 idle
+cpu0 hwid=0 ticks=183 ipis=0 switches=25 idle
+cpu1 hwid=3 ticks=9 ipis=6 switches=10 idle
+cpu2 hwid=1 ticks=55 ipis=6 switches=58 idle
+cpu3 hwid=2 ticks=49 ipis=5 switches=51 idle
 ```
 
 ## Linux compatibility
@@ -484,6 +488,7 @@ src/                 all system source
   boot/              own BIOS boot sector + CHS stage2
   uefi/              own PE32+ UEFI loader
   arch/x86_64/       long mode, context switch, IDT, timer/APIC, SMP bring-up, VGA, GOP, input, ATA/AHCI/firmware block, user mode, shell
+  arch/arm64/        QEMU virt PL011 console, generic counter, PSCI, EL1 contexts and exception vectors, core self-check boot
   user/              init.elf and ipc.elf sources for the isolated ring-3 processes
   ramdisk/           files packed by tools/mkinitrd.py
 tools/               image/FAT32/initrd builders, lfc1 builder/checker, QEMU tests

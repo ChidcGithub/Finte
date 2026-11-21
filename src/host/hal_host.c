@@ -124,11 +124,6 @@ void hal_init(void)
     g_active = NULL;
 }
 
-void hal_boot_info(const fboot_info_t *bi)
-{
-    (void)bi;
-}
-
 int hal_fw_begin(void)
 {
     return 0;
@@ -248,38 +243,6 @@ void hal_panic(const char *msg)
     hal_console_write(msg ? msg : "unknown", msg ? strlen(msg) : 7);
     hal_console_write("\n", 1);
     exit(70);
-}
-
-void hal_watchdog_strike(const char *reason)
-{
-    (void)reason;
-}
-
-void hal_watchdog_suspend(void)
-{
-}
-
-void hal_watchdog_resume(void)
-{
-}
-
-int hal_watchdog_strikes(void)
-{
-    return 0;
-}
-
-const char *hal_watchdog_last(void)
-{
-    return "";
-}
-
-void hal_watchdog_clear(void)
-{
-}
-
-int hal_is_uefi(void)
-{
-    return 0;
 }
 
 void *hal_pages_alloc(size_t bytes)

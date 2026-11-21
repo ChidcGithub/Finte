@@ -132,7 +132,7 @@ void smp_timer_init_ap(void)
 {
     fcpu_t *cpu = hal_cpu_self();
     if (g_tsc_deadline) {
-        cpu->timer_kind = 1;
+        cpu->timer_mode = FINTE_TIMER_ONESHOT;
         lapic_write(LAPIC_LVT_TIMER, 0x10000u);
         return;
     }
@@ -145,24 +145,24 @@ void smp_timer_init_ap(void)
     uint32_t c0 = lapic_read(0x390u);
     delay_ns(10000000ull);
     uint32_t c1 = lapic_read(0x390u);
-    cpu->lapic_period = c0 - c1;
+    cpu->timer_period = c0 - c1;
     lapic_write(0x380u, 0);
     lapic_write(LAPIC_LVT_TIMER, 0x10000u);
-    if (cpu->lapic_period < 1000u) {
-        cpu->timer_kind = 0;
+    if (cpu->timer_period < 1000u) {
+        cpu->timer_mode = FINTE_TIMER_NONE;
     } else {
-        cpu->timer_kind = 2;
+        cpu->timer_mode = FINTE_TIMER_PERIODIC;
     }
 }
 
 void hal_timer_start_cpu(void)
 {
     fcpu_t *cpu = hal_cpu_self();
-    if (cpu->timer_kind == 1) {
+    if (cpu->timer_mode == FINTE_TIMER_ONESHOT) {
         lapic_write(LAPIC_LVT_TIMER, 0x20u | (1u << 18)); /* TSC-deadline */
         smp_timer_rearm();
-    } else if (cpu->timer_kind == 2) {
-        lapic_write(0x380u, cpu->lapic_period);
+    } else if (cpu->timer_mode == FINTE_TIMER_PERIODIC) {
+        lapic_write(0x380u, cpu->timer_period);
         lapic_write(LAPIC_LVT_TIMER, 0x20u | (1u << 17)); /* periodic */
     }
 }
@@ -170,7 +170,7 @@ void hal_timer_start_cpu(void)
 void hal_timer_stop_cpu(void)
 {
     fcpu_t *cpu = hal_cpu_self();
-    if (cpu->timer_kind) {
+    if (cpu->timer_mode) {
         lapic_write(LAPIC_LVT_TIMER, 0x10000u);
     }
 }
@@ -217,7 +217,7 @@ void hal_cpu_wake(uint32_t index)
     if (!cpu->idle) {
         return;
     }
-    smp_send_resched(cpu->apic_id);
+    smp_send_resched(cpu->hw_id);
 }
 
 void hal_cpu_wake_all(void)
@@ -269,9 +269,9 @@ void ap_main(void *boot, uint32_t index)
         }
     }
     cpu->id = index;
-    cpu->apic_id = lapic_read(0x20u) >> 24;
+    cpu->hw_id = lapic_read(0x20u) >> 24;
     cpu->online = 1;
-    cpu->timer_kind = 1;
+    cpu->timer_mode = FINTE_TIMER_ONESHOT;
     hal_cpu_install(cpu);
     hal_cpu_mark_online(index);
     lapic_init();
@@ -280,7 +280,7 @@ void ap_main(void *boot, uint32_t index)
 
     char buf[64];
     int n = finte_format(buf, sizeof(buf), "[smp] cpu %u online (apic %u)\n",
-                         (unsigned)index, (unsigned)cpu->apic_id);
+                         (unsigned)index, (unsigned)cpu->hw_id);
     hal_console_write(buf, (size_t)n);
 
     finte_sched_ap_run();

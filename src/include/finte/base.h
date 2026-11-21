@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include "finte/arch.h"
 
 #define FINTE_VERSION_MAJOR 0
 #define FINTE_VERSION_MINOR 0

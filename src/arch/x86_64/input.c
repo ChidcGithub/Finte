@@ -2,6 +2,7 @@
 #include "input.h"
 #include "finte/uefi.h"
 #include "finte/hal.h"
+#include "hal_x86.h"
 #include <stdint.h>
 
 #define COM1 0x3F8

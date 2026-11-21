@@ -31,9 +31,6 @@ static void watchdog_panic(const char *reason)
     hal_console_write(WD_CYAN "[watchdog]" WD_RESET " shutdown\n", 31);
     hal_idle(250000000ull);
     hal_exit(0x70);
-    for (;;) {
-        __asm__ volatile("cli; hlt");
-    }
 }
 
 void hal_watchdog_strike(const char *reason)

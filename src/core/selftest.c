@@ -37,6 +37,12 @@ static void st_check(int ok, const char *expr, int line)
         char text[96];
         int n = finte_format(text, sizeof(text), "#%03d %s: ", st_checks,
                              ok ? "ok" : "FAIL");
+        if (n < 0) {
+            n = 0;
+        }
+        if (n > (int)sizeof(text) - 48) {
+            n = (int)sizeof(text) - 48;
+        }
         size_t used = (size_t)n;
         size_t elen = finte_strlen(expr);
         /* Leave room for the timestamp prefix (15 chars) on an 80-column
@@ -450,7 +456,7 @@ static void st_persona(void)
     uint64_t uargs[6] = { (uint64_t)(uintptr_t)&u, 0, 0, 0, 0, 0 };
     ST(finte_linux_call(g, FINTE_NR_uname, uargs) == 0);
     ST(finte_strcmp(u.sysname, "Linux") == 0);
-    ST(finte_strcmp(u.machine, "x86_64") == 0);
+    ST(finte_strcmp(u.machine, FINTE_ARCH_NAME) == 0);
 
     uint64_t margs[6] = { 0, 4096, FINTE_PROT_READ | FINTE_PROT_WRITE,
                           FINTE_MAP_PRIVATE | FINTE_MAP_ANONYMOUS,

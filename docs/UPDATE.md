@@ -2,6 +2,11 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-21 — portable HAL and arm64
+- HAL is platform-neutral: console, time, IRQ, contexts, pages, block I/O.
+- Added QEMU `virt` arm64 backend and `make arm64-test`.
+- arm64 runs the same 147 core checks; Linux persona remains x86_64.
+
 ## 2026-11-21 — memory isolation
 - User copy-in/out walks page tables and checks write rights.
 - Page-scoped arena caps reserve slices; `procs` maps one page per service.

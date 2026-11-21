@@ -5,6 +5,7 @@
 #include "finte/finte.h"
 #include "finte/uefi.h"
 #include "blk.h"
+#include "hal_x86.h"
 
 #define ATA_MAX 4
 #define AHCI_MAX_DEV 8
@@ -693,10 +694,4 @@ int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors)
     }
     return fw_write(&g_fw[index - g_ata_count - g_ahci_count], lba, buf,
                     sectors);
-}
-
-int hal_blk_add_image(const char *path)
-{
-    (void)path;
-    return -1;
 }

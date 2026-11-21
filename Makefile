@@ -13,6 +13,10 @@ SMP      ?= 4
 ACCEL    ?= $(shell if [ -w /dev/kvm ]; then echo "-accel kvm"; else echo "-accel tcg"; fi)
 CLANG    ?= clang
 LLD_LINK ?= lld-link
+ARM64_CC ?= clang
+ARM64_LD ?= aarch64-linux-gnu-ld
+ARM64_TARGET ?= aarch64-none-elf
+QEMU_ARM64 ?= qemu-system-aarch64
 PYTHON   ?= python3
 BUILD    ?= build
 $(shell mkdir -p $(BUILD))
@@ -27,13 +31,18 @@ UEFI_CFLAGS := -target x86_64-pc-windows-msvc -c -ffreestanding \
 USER_CFLAGS := -m64 -std=c11 -O2 -ffreestanding -fno-builtin -fno-pic \
                -fno-pie -fno-stack-protector -mno-red-zone -mno-sse -mno-sse2 \
                -mcmodel=large -Wall -Wextra
+ARM64_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -g -ffreestanding \
+                -fno-builtin -fno-pic -fno-pie -fno-stack-protector \
+                -fno-unwind-tables -fno-asynchronous-unwind-tables \
+                -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
+                -Wall -Wextra -Isrc/include -I$(BUILD)
 
 HEADERS := $(wildcard src/include/finte/*.h)
 CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c src/core/channel.c \
             src/core/flow.c src/core/sched.c src/core/verb.c src/core/compat_linux.c \
             src/core/demo.c src/core/guest_linux.c src/core/selftest.c src/core/initrd.c \
             src/core/disk.c src/core/lfc1.c src/core/ext4.c src/core/ntfs.c src/core/file.c \
-            src/core/lock.c src/core/cas.c src/core/ansi.c
+            src/core/lock.c src/core/cas.c src/core/ansi.c src/core/watchdog.c
 HOST_SRC := $(CORE_SRC) src/host/hal_host.c src/host/blk_host.c src/host/main.c src/host/bench.c src/tests/test_main.c
 
 KERNEL_SRC := $(CORE_SRC) src/arch/x86_64/kmain.c src/arch/x86_64/hal_x86.c \
@@ -41,22 +50,57 @@ KERNEL_SRC := $(CORE_SRC) src/arch/x86_64/kmain.c src/arch/x86_64/hal_x86.c \
               src/arch/x86_64/vga.c src/arch/x86_64/fb.c \
               src/arch/x86_64/input.c src/arch/x86_64/scroll.c \
               src/arch/x86_64/blk.c src/arch/x86_64/timer.c src/arch/x86_64/usermode.c \
-              src/arch/x86_64/process.c src/arch/x86_64/watchdog.c \
-              src/arch/x86_64/smp.c src/arch/x86_64/shell.c $(BUILD)/ap_trampoline_bin.c
+              src/arch/x86_64/process.c src/arch/x86_64/smp.c src/arch/x86_64/shell.c $(BUILD)/ap_trampoline_bin.c
 KERNEL_ASM := src/arch/x86_64/context.S src/arch/x86_64/faults.S src/arch/x86_64/entry64.S \
               src/arch/x86_64/usermode.S src/arch/x86_64/timer.S
 KERNEL_OBJ := $(patsubst %.c,$(BUILD)/kobj/%.o,$(KERNEL_SRC)) \
               $(patsubst %.S,$(BUILD)/kobj/asm/%.o,$(KERNEL_ASM))
 
+ARM64_SRC := $(CORE_SRC) src/arch/arm64/kmain_arm64.c src/arch/arm64/hal_arm64.c \
+             src/arch/arm64/string.c
+ARM64_ASM := src/arch/arm64/entry.S src/arch/arm64/context.S
+ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
+             $(patsubst %.S,$(BUILD)/arm64/obj/%.o,$(ARM64_ASM))
+
 .PHONY: all host kernel kernel-elf image uefi bootloader initrd test selfcheck \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
-        disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE
+        disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
+        arm64 arm64-test qemu-arm64
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
 	$(PYTHON) tools/gen_version.py $@
 
 FORCE:
+
+arm64: $(BUILD)/finte-arm64.elf
+
+$(BUILD)/arm64/obj/%.o: %.c $(HEADERS) $(VERSION_HEADER)
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) $(ARM64_CFLAGS) -c $< -o $@
+
+$(BUILD)/arm64/obj/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) --target=$(ARM64_TARGET) -c $< -o $@
+
+$(BUILD)/finte-arm64.elf: $(ARM64_OBJ) src/arch/arm64/kernel.ld
+	$(ARM64_LD) -T src/arch/arm64/kernel.ld -o $@ $(ARM64_OBJ)
+
+arm64-test: arm64
+	@rm -f $(BUILD)/arm64.log
+	timeout 40 $(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 1 \
+	  -nographic -monitor none -no-reboot \
+	  -kernel $(BUILD)/finte-arm64.elf > $(BUILD)/arm64.log 2>&1 || true
+	@if grep -q "arm64 self-check: PASS" $(BUILD)/arm64.log; then \
+	  echo "arm64 boot test: OK"; \
+	else \
+	  echo "arm64 boot test: FAILED"; tail -80 $(BUILD)/arm64.log; exit 1; \
+	fi
+
+qemu-arm64: arm64
+	$(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 1 \
+	  -nographic -monitor none -no-reboot \
+	  -kernel $(BUILD)/finte-arm64.elf
 
 all: host image
 

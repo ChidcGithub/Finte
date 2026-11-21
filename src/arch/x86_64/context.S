@@ -1,6 +1,6 @@
 /* Cooperative x86_64 context switch.
  *
- * kx_switch(&from->rsp, to->rsp) saves RFLAGS and the callee-saved register
+ * kx_switch(&from->sp, to->sp) saves RFLAGS and the callee-saved register
  * set, then returns on the other stack. Saving RFLAGS lets a flow run with
  * interrupts enabled while the scheduler runs with them disabled. New stacks
  * are prepared by hal_ctx_create with a flags slot, six dummy callee-saved

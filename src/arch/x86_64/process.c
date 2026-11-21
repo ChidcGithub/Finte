@@ -406,7 +406,7 @@ static void user_process_entry(fflow_t *f)
     if (!p) {
         finte_flow_exit(f, 1);
     }
-    f->ctx->cr3 = p->pml4_phys;
+    f->ctx->addr_space = p->pml4_phys;
     write_cr3(p->pml4_phys);
     um_enter(p->entry, p->stack_top - 16u, 0x202u);
 }

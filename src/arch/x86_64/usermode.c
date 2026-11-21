@@ -5,6 +5,7 @@
  * follows the running process's kernel stack) and the syscall entry. */
 #include "finte/finte.h"
 #include "process.h"
+#include "hal_x86.h"
 
 typedef struct __attribute__((packed)) tss64 {
     uint32_t reserved0;

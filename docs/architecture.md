@@ -543,7 +543,27 @@ a deliberate read of supervisor memory that kills only the offending process.
 Still missing: `fork`/`exec`, signals, per-process file descriptors, general
 `mmap`, user-to-user capability transfer, and per-CPU TSS support.
 
-## 13. Why this shape performs
+## 13. HAL and portability
+
+The core sees only `src/include/finte/hal.h`: console, monotonic time, CPU-local
+state, IRQ masks, spinlocks, page allocation, context switching, block I/O and a
+firmware-call window. Platform-specific boot data and UEFI hooks live in
+`src/arch/x86_64/hal_x86.h`; the host image hook lives in
+`src/host/hal_host.h`; the generic three-strike watchdog is in `src/core/`.
+
+- **x86_64** (`src/arch/x86_64/`): VGA/GOP/serial consoles, PIT/LAPIC/TSC
+  timers, CR3 address spaces, ATA/AHCI/UEFI block devices.
+- **arm64** (`src/arch/arm64/`): QEMU `virt` with a PL011 console, `CNTPCT_EL0`
+  timebase, PSCI power-off, DAIF interrupt masking, TTBR0 address-space hook,
+  packed context switch, and an EL0 exception vector table. Block devices are
+  not wired yet.
+- `make arm64-test` boots the arm64 ELF and runs the same **147** core checks.
+  The Linux syscall persona remains x86_64-numbered; the arm64 port currently
+  exercises the core and scheduler, not the shell or disk stack.
+- The public CPU/context fields are neutral (`hw_id`, `timer_mode`,
+  `addr_space`, `sp`), so adding another platform does not change core code.
+
+## 14. Why this shape performs
 
 - **No path resolution.** A handle is an index; a cap is an index plus a rights mask.
 - **Bounded object tables.** No global lock, no allocator on lookup.
@@ -559,7 +579,7 @@ global core lock), static flow affinity, one shared user address space, static
 table limits, no demand paging, append-only lfc1, and a small Linux subset.
 These are the boundaries of v0.0.0, not accidents.
 
-## 14. Comparison with Linux
+## 15. Comparison with Linux
 
 | concern | Linux | Finte v0.0.0 |
 | --- | --- | --- |

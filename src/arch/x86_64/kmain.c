@@ -6,6 +6,7 @@
 #include "blk.h"
 #include "timer.h"
 #include "smp.h"
+#include "hal_x86.h"
 
 void faults_init(void);
 void finte_kernel_post(uint64_t boot_arg, uint64_t magic);

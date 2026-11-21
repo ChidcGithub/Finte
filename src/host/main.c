@@ -3,6 +3,7 @@
 #include "finte/demo.h"
 #include "finte/guest.h"
 #include "finte/selftest.h"
+#include "hal_host.h"
 
 #include <stdio.h>
 #include <string.h>

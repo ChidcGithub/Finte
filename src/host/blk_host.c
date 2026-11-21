@@ -6,6 +6,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "finte/finte.h"
+#include "hal_host.h"
 
 #include <stdio.h>
 #include <string.h>

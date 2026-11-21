@@ -39,9 +39,9 @@ void timer_init(void)
 void timer_irq(void)
 {
     fcpu_t *cpu = hal_cpu_self();
-    if (cpu && cpu->timer_kind) {
+    if (cpu && cpu->timer_mode) {
         smp_lapic_eoi();
-        if (cpu->timer_kind == 1 && cpu->current) {
+        if (cpu->timer_mode == FINTE_TIMER_ONESHOT && cpu->current) {
             smp_timer_rearm();
         }
     } else {

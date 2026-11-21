@@ -4,7 +4,8 @@ param(
                  "bootloader", "initrd", "user", "test", "selfcheck", "bench",
                  "demo", "compat", "disk-test", "disk-image", "qemu",
                  "qemu-uefi", "qemu-uefi-test", "qemu-test", "qemu-disk-test",
-                 "qemu-uefi-disk-test", "clean")]
+                 "qemu-uefi-disk-test", "arm64", "arm64-test", "qemu-arm64",
+                 "clean")]
     [string]$Target = "all",
     [string]$Distro = "Ubuntu-26.04"
 )

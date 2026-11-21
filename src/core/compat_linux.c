@@ -669,7 +669,7 @@ static int64_t lx_uname(fflow_t *f, uint64_t nr, const uint64_t args[6])
     finte_strlcpy(u->nodename, "finte", sizeof(u->nodename));
     finte_strlcpy(u->release, "0.0.0-finte", sizeof(u->release));
     finte_strlcpy(u->version, "#1 Finte", sizeof(u->version));
-    finte_strlcpy(u->machine, "x86_64", sizeof(u->machine));
+    finte_strlcpy(u->machine, FINTE_ARCH_NAME, sizeof(u->machine));
     finte_strlcpy(u->domainname, "(none)", sizeof(u->domainname));
     return 0;
 }

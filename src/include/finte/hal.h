@@ -1,32 +1,39 @@
 /* Platform boundary.
  *
- * The core never touches hardware directly. Host runs use ucontext/fibers;
- * the x86_64 kernel uses a small assembly context switch and COM1.
+ * The core never touches hardware directly. A platform provides console,
+ * time, CPU-local state, page allocation, contexts and block devices. Host
+ * runs use ucontext/fibers; bare-metal ports provide their own context switch.
  */
 #ifndef FINTE_HAL_H
 #define FINTE_HAL_H
 
 #include "finte/base.h"
-#include "finte/boot.h"
 
 typedef struct fhal_ctx fhal_ctx_t;
 
 #define FINTE_MAX_CPUS 8
 
-/* Per-CPU scheduling and interrupt state. `self` is first so %gs can point
- * directly at the structure. */
+typedef enum {
+    FINTE_TIMER_NONE = 0,
+    FINTE_TIMER_ONESHOT = 1,
+    FINTE_TIMER_PERIODIC = 2,
+    FINTE_TIMER_ARCH = 3
+} fhal_timer_mode_t;
+
+/* Per-CPU scheduling and interrupt state. Platforms that use a CPU-local
+ * register may keep `self` first. */
 typedef struct fcpu {
     struct fcpu *self;
     struct fflow *current;
     struct fhal_ctx *sched_ctx;
     uint32_t id;
-    uint32_t apic_id;
+    uint32_t hw_id;             /* APIC id, MPIDR affinity, ... */
     volatile uint32_t online;
-    volatile uint32_t timer_kind; /* 0 = PIT (BSP), 1 = TSC, 2 = periodic */
+    volatile uint32_t timer_mode; /* fhal_timer_mode_t */
     volatile uint32_t need_resched;
     volatile uint32_t idle;
     uint32_t core_depth;
-    uint32_t lapic_period;
+    uint32_t timer_period;
     uint64_t lock_flags;
     uint64_t ticks;
     uint64_t switches;
@@ -41,12 +48,11 @@ struct fhal_ctx {
     void *impl;          /* platform-specific handle */
     void *stack;
     size_t stack_size;
-    uint64_t cr3;        /* address space to load, 0 = keep current */
-    uint64_t rsp;        /* kernel context switch */
+    uint64_t addr_space; /* platform page-table root, 0 = keep current */
+    uint64_t sp;         /* platform context stack pointer */
 };
 
 void hal_init(void);
-void hal_boot_info(const fboot_info_t *bi);
 void hal_console_write(const char *buf, size_t len);
 void hal_console_write_raw(const char *buf, size_t len);
 void hal_console_clear(void);
@@ -66,7 +72,6 @@ uint64_t hal_now_ns(void);
 void hal_idle(uint64_t ns);
 void hal_exit(int code) __attribute__((noreturn));
 void hal_panic(const char *msg) __attribute__((noreturn));
-int hal_is_uefi(void);
 
 /* Three-strike system watchdog. */
 void hal_watchdog_strike(const char *reason);
@@ -90,8 +95,7 @@ void hal_cpu_idle(void);
 void hal_timer_start_cpu(void);
 void hal_timer_stop_cpu(void);
 
-/* Raw block devices. The disk manager works only through this interface.
- * hal_blk_add_image() is a host/test hook; the kernel returns -1. */
+/* Raw block devices. The disk manager works only through this interface. */
 #define FBLK_NAME_MAX 16
 #define FBLK_MAX 8
 #define FBLK_FLAG_REMOVABLE 1u
@@ -107,7 +111,6 @@ int hal_blk_count(void);
 int hal_blk_info(int index, fblk_info_t *out);
 int hal_blk_read(int index, uint64_t lba, void *buf, uint32_t sectors);
 int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors);
-int hal_blk_add_image(const char *path);
 
 /* Temporarily switch to the firmware IDT for UEFI Boot Services calls. */
 int hal_fw_begin(void);
@@ -127,7 +130,6 @@ fhal_ctx_t *hal_ctx_self(void);
 fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes);
 void hal_ctx_destroy(fhal_ctx_t *ctx);
 void hal_ctx_switch(fhal_ctx_t *from, fhal_ctx_t *to);
-void hal_user_bind_stack(void *top);
 
 /* Called by the tiny platform trampoline with the active context installed. */
 void finte_hal_bootstrap(void);

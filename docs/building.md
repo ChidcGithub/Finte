@@ -17,13 +17,22 @@
 - Python 3 for the image/FAT32/initrd builders.
 - QEMU `qemu-system-x86_64` for BIOS (`SeaBIOS`) and UEFI (`OVMF`) tests.
 - LLVM `clang` + `lld-link` for the PE32+ UEFI loader.
+- Optional arm64: `clang`, `aarch64-linux-gnu-ld` and
+  `qemu-system-aarch64`.
 - OVMF firmware files for `make qemu-uefi`:
   `/usr/share/OVMF/OVMF_CODE_4M.fd`, `OVMF_VARS_4M.fd`.
 
 Ubuntu/WSL:
 
 ```bash
-sudo apt install build-essential qemu-system ovmf
+sudo apt install build-essential qemu-system ovmf clang lld \
+  binutils-aarch64-linux-gnu qemu-system-arm
+```
+
+Build the arm64 QEMU `virt` image and run the core suite:
+
+```bash
+make arm64-test
 ```
 
 The modern UEFI test also needs `lld-link` (from LLVM), `python3`, and `cp`.
@@ -297,7 +306,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 - Windows 11 QEMU GTK GUI: UEFI boot, 1280x800 window, shell screenshot.
 - Windows 11 QEMU + WHPX: 4-CPU boot, UEFI disk write/read, real keyboard
   input, `preempt` ~135 ms (vs ~397 ms TCG).
-- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 16 tests,
+- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 19 tests,
   self-check, demo, compat, benchmark.
 
 Physical laptop validation is still pending; the image is built for both BIOS
