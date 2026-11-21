@@ -277,7 +277,11 @@ typedef struct fret {
 } fret_t;
 ```
 
-Unlike the `errno` convention, a successful call cannot be confused with an error and a value can be 64-bit without sign ambiguity. The verb set is intentionally small: 23 verbs. See [abi.md](abi.md).
+Unlike the `errno` convention, a successful call cannot be confused with an error
+and a value can be 64-bit without sign ambiguity. The verb set is intentionally
+small: 23 verbs. See [abi.md](abi.md). Verbs dispatch through a direct-indexed
+handler table; the Linux personality uses a sorted syscall table and binary
+search.
 
 Native flows call the dispatcher directly. The ring-3 demo uses a separate
 `int 0x80` gate with a minimal `write`/`exit`/`getpid` ABI in
