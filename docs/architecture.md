@@ -216,11 +216,17 @@ The scheduler is **timer-preemptive and SMP-aware**:
   available and a periodic fallback otherwise.
 - APs are started through an INIT/SIPI trampoline at physical `0x8000`. Each AP
   loads the BSP's GDT/IDT (relocated to kernel memory first), claims a logical
-  CPU slot, installs its own GS base and enters `finte_sched_ap_run()`.
-- Each CPU owns a two-band run queue. Flows are assigned a CPU at creation and
-  keep that affinity. A global scheduler spinlock protects queue and state
-  transitions; a `queued` flag prevents double insertion when a wake races with
-  a context switch.
+  CPU slot, installs its own GS base, builds its own GDT/TSS lazily on first
+  flow switch, and enters `finte_sched_ap_run()`.
+- Each CPU owns a two-band run queue and a **per-CPU run-queue lock**. A small
+  state lock covers sleep/throttle lists and blocked/ready transitions, not
+  queue pops. A `queued` flag prevents double insertion.
+- An idle CPU **steals** one ready flow from another queue without taking the
+  state lock. `finte_sched_migrate()` moves a queued flow between CPUs and
+  changes affinity for running/blocked/sleeping flows; `smp` reports steals
+  and migrations per CPU.
+- Per-CPU page and 32 KiB stack caches absorb allocator traffic before the
+  global free lists; node and flow allocation scan from per-CPU hints.
 - The timer gate calls `finte_sched_preempt()`, which marks the running flow
   READY and switches to that CPU's scheduler stack. `kx_switch` saves RFLAGS as
   well as the callee-saved registers. Flows run with IF=1; schedulers keep IF=0.
@@ -228,7 +234,7 @@ The scheduler is **timer-preemptive and SMP-aware**:
   serializes object, capability, channel, arena, disk and console operations
   across CPUs. Blocking verbs release it around the context switch and
   reacquire it when woken; a timer cannot preempt a flow in the middle of a
-  verb.
+  verb. Splitting this object-table lock is the next scheduling stage.
 - Reschedule IPIs are sent only to CPUs parked in HLT. Batch start broadcasts a
   wakeup; an idle AP sleeps until an IPI or its local timer. AP timers are
   masked while no flow is running.

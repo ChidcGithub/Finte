@@ -19,6 +19,13 @@ static int g_uefi;
 static uint8_t g_heap[KERNEL_HEAP_BYTES] __attribute__((aligned(4096)));
 static size_t g_heap_used;
 
+static uint64_t read_cr3(void)
+{
+    uint64_t v;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(v));
+    return v;
+}
+
 typedef struct page_link {
     struct page_link *next;
 } page_link_t;
@@ -28,7 +35,20 @@ static size_t g_free_page_count;
 static page_link_t *g_free_stacks;
 static size_t g_free_stack_count;
 
+#define CPU_PAGE_CACHE 4
+static void *g_cpu_pages[FINTE_MAX_CPUS][CPU_PAGE_CACHE];
+static uint8_t g_cpu_page_count[FINTE_MAX_CPUS];
+static void *g_cpu_stacks[FINTE_MAX_CPUS];
+static size_t g_cpu_cached_pages;
+static size_t g_cpu_cached_stacks;
+
 #define FLOW_STACK_BYTES (32u * 1024u)
+
+static uint32_t page_cpu(void)
+{
+    uint32_t id = hal_cpu_self()->id;
+    return id < FINTE_MAX_CPUS ? id : 0;
+}
 
 static uint64_t g_fw_idt_base;
 static uint32_t g_fw_idt_limit;
@@ -328,7 +348,9 @@ void hal_heap_info(uint64_t *used, uint64_t *total)
 {
     if (used) {
         *used = g_heap_used - (uint64_t)g_free_page_count * 4096ull -
-                (uint64_t)g_free_stack_count * FLOW_STACK_BYTES;
+                (uint64_t)g_free_stack_count * FLOW_STACK_BYTES -
+                (uint64_t)g_cpu_cached_pages * 4096ull -
+                (uint64_t)g_cpu_cached_stacks * FLOW_STACK_BYTES;
     }
     if (total) {
         *total = KERNEL_HEAP_BYTES;
@@ -370,6 +392,10 @@ void hal_init(void)
     g_free_page_count = 0;
     g_free_stacks = NULL;
     g_free_stack_count = 0;
+    g_cpu_cached_pages = 0;
+    g_cpu_cached_stacks = 0;
+    finte_memset(g_cpu_page_count, 0, sizeof(g_cpu_page_count));
+    finte_memset(g_cpu_stacks, 0, sizeof(g_cpu_stacks));
 }
 
 fcpu_t *hal_cpu_self(void)
@@ -540,6 +566,32 @@ void *hal_pages_alloc(size_t bytes)
     if (bytes == 0) {
         bytes = 4096;
     }
+    uint32_t id = page_cpu();
+    if (bytes == 4096 && g_cpu_page_count[id]) {
+        void *page = g_cpu_pages[id][--g_cpu_page_count[id]];
+        g_cpu_cached_pages--;
+        finte_memset(page, 0, 4096);
+        return page;
+    }
+    if (bytes == FLOW_STACK_BYTES && g_cpu_stacks[id]) {
+        void *stack = g_cpu_stacks[id];
+        g_cpu_stacks[id] = NULL;
+        g_cpu_cached_stacks--;
+        finte_memset(stack, 0, bytes);
+        return stack;
+    }
+    if (bytes == FLOW_STACK_BYTES) {
+        uint64_t flags = hal_irq_save();
+        page_link_t *block = g_free_stacks;
+        if (block) {
+            g_free_stacks = block->next;
+            g_free_stack_count--;
+            hal_irq_restore(flags);
+            finte_memset(block, 0, bytes);
+            return block;
+        }
+        hal_irq_restore(flags);
+    }
     if (bytes == 4096) {
         uint64_t flags = hal_irq_save();
         page_link_t *page = g_free_pages;
@@ -573,6 +625,17 @@ void hal_pages_free(void *ptr, size_t bytes)
         page + bytes > base + KERNEL_HEAP_BYTES) {
         return;
     }
+    uint32_t id = page_cpu();
+    if (bytes == 4096 && g_cpu_page_count[id] < CPU_PAGE_CACHE) {
+        g_cpu_pages[id][g_cpu_page_count[id]++] = ptr;
+        g_cpu_cached_pages++;
+        return;
+    }
+    if (bytes == FLOW_STACK_BYTES && !g_cpu_stacks[id]) {
+        g_cpu_stacks[id] = ptr;
+        g_cpu_cached_stacks++;
+        return;
+    }
     uint64_t flags = hal_irq_save();
     for (size_t off = 0; off < bytes; off += 4096u) {
         page_link_t *link = (page_link_t *)(page + off);
@@ -589,6 +652,9 @@ fhal_ctx_t *hal_ctx_self(void)
     uint32_t id = cpu->id < FINTE_MAX_CPUS ? cpu->id : 0;
     if (!g_active[id]) {
         g_active[id] = &g_sched[id];
+    }
+    if (g_sched[id].addr_space == 0) {
+        g_sched[id].addr_space = read_cr3();
     }
     return g_active[id];
 }

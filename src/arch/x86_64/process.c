@@ -469,11 +469,9 @@ static fproc_t *proc_create(const char *name, const char *elf, uint32_t pid,
         goto fail;
     }
     p->flow->user = p;
-    /* The TSS is global: user processes run only on the BSP until per-CPU
-     * TSS/GDT support lands.  Kernel flows still use every CPU. */
-    (void)cpu;
-    p->cpu = 0;
-    p->flow->cpu = 0;
+    /* Flows are assigned round-robin by finte_flow_create; the per-CPU TSS
+     * and GDT let user processes run on any CPU. */
+    p->cpu = p->flow->cpu;
     p->flow->priority = 0;
     stage = 8;
     if (finte_handle_valid(chan) && rights) {

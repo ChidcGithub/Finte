@@ -5,6 +5,7 @@
 
 int finte_usermode_run(const char *name);
 void usermode_prepare(void);
+void usermode_prepare_cpu(uint32_t cpu);
 
 /* Called from the exception handler for a fault taken with CPL=3.  If the
  * current flow owns a user process it prints the fault, kills that process and

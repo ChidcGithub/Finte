@@ -24,57 +24,76 @@ typedef struct __attribute__((packed)) gdtr64 {
     uint64_t base;
 } gdtr64_t;
 
-static uint64_t g_gdt[7] __attribute__((aligned(16)));
-static tss64_t g_tss __attribute__((aligned(16)));
+static uint64_t g_gdt[FINTE_MAX_CPUS][7] __attribute__((aligned(16)));
+static tss64_t g_tss[FINTE_MAX_CPUS] __attribute__((aligned(16)));
+static uint8_t g_gdt_ready[FINTE_MAX_CPUS];
 
 extern void um_load_gdt(const gdtr64_t *g);
 extern void um_enter(uint64_t rip, uint64_t rsp, uint64_t flags)
     __attribute__((noreturn));
 extern void faults_set_kernel_cs(uint16_t cs);
 
-static void gdt_set(int index, uint64_t value)
+static void gdt_set(uint64_t *gdt, int index, uint64_t value)
 {
-    g_gdt[index] = value;
+    gdt[index] = value;
 }
 
-static void build_gdt(void)
+static void build_gdt(uint32_t cpu)
 {
-    uint64_t base = (uint64_t)(uintptr_t)&g_tss;
-    uint64_t limit = sizeof(g_tss) - 1;
-    gdt_set(0, 0);
-    gdt_set(1, 0x00AF9A000000FFFFull); /* kernel code, L=1 */
-    gdt_set(2, 0x00CF92000000FFFFull); /* kernel data */
-    gdt_set(3, 0x00CFF2000000FFFFull); /* user data, DPL3 */
-    gdt_set(4, 0x00AFFA000000FFFFull); /* user code, DPL3, L=1 */
-    g_gdt[5] = (limit & 0xFFFFu) |
-               ((base & 0xFFFFFFu) << 16) |
-               ((uint64_t)0x89 << 40) |
-               (((limit >> 16) & 0xFu) << 48) |
-               (((base >> 24) & 0xFFu) << 56);
-    g_gdt[6] = base >> 32;
-    g_tss.iomap_base = sizeof(g_tss);
-    gdtr64_t gdtr = { sizeof(g_gdt) - 1, (uint64_t)(uintptr_t)g_gdt };
+    if (cpu >= FINTE_MAX_CPUS) {
+        return;
+    }
+    uint64_t *gdt = g_gdt[cpu];
+    tss64_t *tss = &g_tss[cpu];
+    uint64_t base = (uint64_t)(uintptr_t)tss;
+    uint64_t limit = sizeof(*tss) - 1;
+    gdt_set(gdt, 0, 0);
+    gdt_set(gdt, 1, 0x00AF9A000000FFFFull); /* kernel code, L=1 */
+    gdt_set(gdt, 2, 0x00CF92000000FFFFull); /* kernel data */
+    gdt_set(gdt, 3, 0x00CFF2000000FFFFull); /* user data, DPL3 */
+    gdt_set(gdt, 4, 0x00AFFA000000FFFFull); /* user code, DPL3, L=1 */
+    gdt[5] = (limit & 0xFFFFu) |
+             ((base & 0xFFFFFFu) << 16) |
+             ((uint64_t)0x89 << 40) |
+             (((limit >> 16) & 0xFu) << 48) |
+             (((base >> 24) & 0xFFu) << 56);
+    gdt[6] = base >> 32;
+    tss->iomap_base = sizeof(*tss);
+    gdtr64_t gdtr = { sizeof(g_gdt[cpu]) - 1,
+                      (uint64_t)(uintptr_t)g_gdt[cpu] };
     um_load_gdt(&gdtr);
     faults_set_kernel_cs(0x08);
     __asm__ volatile("mov $0x28, %%ax; ltr %%ax" : : : "rax");
 }
 
-/* Called by hal_ctx_switch before entering a flow.  It keeps TSS.RSP0 on the
- * kernel stack of whichever user process is about to run. */
+/* Called by hal_ctx_switch before entering a flow.  It keeps this CPU's
+ * TSS.RSP0 on the kernel stack of whichever user process is about to run. */
 void hal_user_bind_stack(void *top)
 {
-    /* User mode currently runs only on the BSP, which owns the single TSS.
-     * AP context switches must not rewrite its RSP0. */
-    if (hal_cpu_self()->id != 0) {
+    uint32_t cpu = hal_cpu_self()->id;
+    if (cpu >= FINTE_MAX_CPUS) {
         return;
     }
+    if (!g_gdt_ready[cpu]) {
+        build_gdt(cpu);
+        g_gdt_ready[cpu] = 1;
+    }
     uint64_t rsp0 = (uint64_t)(uintptr_t)top;
-    g_tss.rsp0 = (rsp0 & ~0xFull) - 16u;
+    g_tss[cpu].rsp0 = (rsp0 & ~0xFull) - 16u;
+}
+
+void usermode_prepare_cpu(uint32_t cpu)
+{
+    if (cpu >= FINTE_MAX_CPUS || g_gdt_ready[cpu]) {
+        return;
+    }
+    build_gdt(cpu);
+    g_gdt_ready[cpu] = 1;
 }
 
 void usermode_prepare(void)
 {
-    build_gdt();
+    usermode_prepare_cpu(hal_cpu_self()->id);
 }
 
 uint64_t usermode_syscall(uint64_t *regs)

@@ -266,6 +266,7 @@ void finte_sched_switch_out(fflow_t *f);
 void finte_sched_preempt(fflow_t *f);
 void finte_sched_sleep(fflow_t *f, uint64_t wake_ns);
 void finte_sched_tick(void);
+int finte_sched_migrate(fflow_t *f, uint32_t target);
 
 /* Arena internals. */
 fret_t finte_arena_alloc(farena_t *a, size_t size, size_t align, uint64_t *offset);

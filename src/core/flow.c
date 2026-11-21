@@ -18,7 +18,10 @@ static void flow_entry_trampoline(void *arg)
 fhandle_t finte_flow_create(const char *name, const fprogram_t *prog,
                             uint32_t fuel, uint8_t persona)
 {
-    for (uint32_t i = 0; i < FINTE_MAX_FLOWS; i++) {
+    fcpu_t *cpu0 = hal_cpu_self();
+    uint32_t start = cpu0->flow_hint % FINTE_MAX_FLOWS;
+    for (uint32_t k = 0; k < FINTE_MAX_FLOWS; k++) {
+        uint32_t i = (start + k) % FINTE_MAX_FLOWS;
         fflow_t *f = &finte_core.flows[i];
         if (f->in_use) {
             continue;
@@ -47,6 +50,7 @@ fhandle_t finte_flow_create(const char *name, const fprogram_t *prog,
         for (int c = 0; c < FINTE_MAX_CAPS; c++) {
             f->linux.fd_cap[c] = -1;
         }
+        cpu0->flow_hint = (i + 1u) % FINTE_MAX_FLOWS;
         return h;
     }
     return FINTE_HANDLE_NONE;

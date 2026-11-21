@@ -2,6 +2,12 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-21 — per-CPU scheduling
+- Per-CPU run-queue locks, loops, work stealing and migration API.
+- Per-CPU GDT/TSS lets user flows run on APs.
+- Per-CPU page/stack caches and node/flow allocation hints.
+- Global core object lock remains for the next stage.
+
 ## 2026-11-21 — portable HAL and arm64
 - HAL is platform-neutral: console, time, IRQ, contexts, pages, block I/O.
 - Added QEMU `virt` arm64 backend and `make arm64-test`.

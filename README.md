@@ -27,7 +27,7 @@ Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own 
 - **Disk manager** with MBR/GPT partitions, ATA PIO (BIOS), AHCI and firmware Block I/O (UEFI), writable **lfc1 v2**, and read-only **NTFS**/**ext4**. An 8-entry read cache, atomic superblock-last sync, host `lfc1ck.py` validation/compaction, and capability-backed file handles.
 - **Shell** with `cd`/`pwd`, `write`, `mkdir`, `rm`, `touch`, `cp`, `mv`, `head`, `tail`, `hexdump`, `tree`, `df`, `sync`, history, arrows, home/end/delete and tab completion, in addition to the diagnostic commands.
 - **Timer preemption**: PIT at 100 Hz on the BSP, calibrated LAPIC timers on APs, PIC/LAPIC EOI handling, RFLAGS-aware context switching. Flows run with interrupts enabled; the scheduler and verb dispatcher run with them off. The `preempt` command proves two non-yielding flows make progress.
-- **SMP / multi-core scheduling**: a SIPI trampoline starts up to 8 CPUs, each with per-CPU run queues, local APIC timers and idle IPIs. A global core lock serializes verbs while flows compute in parallel. `smp` shows per-CPU ticks, IPIs, switches and the current flow.
+- **SMP / multi-core scheduling**: a SIPI trampoline starts up to 8 CPUs, each with per-CPU run queues and locks, local APIC timers, idle IPIs and a per-CPU GDT/TSS. Idle CPUs steal ready work and `finte_sched_migrate()` moves flows between CPUs; per-CPU page/stack caches reduce allocator contention. A global core object lock still serializes verbs while flows compute in parallel. `smp` shows per-CPU ticks, IPIs, switches, steals and migrations.
 - **Color console**: the VGA text and GOP framebuffer consoles parse ANSI SGR sequences (`30`–`37`, `90`–`97`, bold) and expose a `color` palette command. Shell prompts, errors and results use color on real hardware as well as in QEMU.
 - **Scrollback**: both consoles keep a 512-line text history. `PageUp`/`PageDown`, `Shift+Up/Down`, `Home`/`End` and the PS/2 mouse wheel scroll it; any other key returns to the live prompt. `help` prints a compact multi-column command grid, and `help -v` keeps the description list.
 - **Boot logo and visible shutdown**: the shell prints a cyan `Finte` ASCII logo after POST. `shutdown` walks through a staged checklist — shell, idle CPUs, disk flush, timer preemption, interrupts — with short pauses, then powers off.
@@ -359,10 +359,10 @@ shows each flow's assigned CPU, and `smp` shows the per-CPU scheduler:
 ```text
 finte> smp
 cpus: 4 online
-cpu0 hwid=0 ticks=183 ipis=0 switches=25 idle
-cpu1 hwid=3 ticks=9 ipis=6 switches=10 idle
-cpu2 hwid=1 ticks=55 ipis=6 switches=58 idle
-cpu3 hwid=2 ticks=49 ipis=5 switches=51 idle
+cpu0 hwid=0 ticks=183 ipis=0 switches=25 steals=0 migrations=0 idle
+cpu1 hwid=3 ticks=9 ipis=6 switches=10 steals=1 migrations=0 idle
+cpu2 hwid=1 ticks=55 ipis=6 switches=58 steals=2 migrations=0 idle
+cpu3 hwid=2 ticks=49 ipis=5 switches=51 steals=1 migrations=0 idle
 ```
 
 ## Linux compatibility

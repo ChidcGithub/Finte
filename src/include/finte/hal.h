@@ -38,6 +38,11 @@ typedef struct fcpu {
     uint64_t ticks;
     uint64_t switches;
     uint64_t ipis;
+    uint32_t steals;
+    uint32_t migrations;
+    uint32_t node_hint;
+    uint32_t flow_hint;
+    volatile int runq_lock;
     struct fflow *runq[2];
     struct fflow *runq_tail[2];
 } fcpu_t;

@@ -72,7 +72,10 @@ fnode_t *finte_node_get(fhandle_t h)
 
 fhandle_t finte_node_alloc(uint16_t type, uint32_t index, uint32_t aux)
 {
-    for (uint32_t i = 0; i < FINTE_MAX_NODES; i++) {
+    fcpu_t *cpu = hal_cpu_self();
+    uint32_t start = cpu->node_hint % FINTE_MAX_NODES;
+    for (uint32_t k = 0; k < FINTE_MAX_NODES; k++) {
+        uint32_t i = (start + k) % FINTE_MAX_NODES;
         fnode_t *n = &finte_core.nodes[i];
         if (n->type != FINTE_NODE_FREE) {
             continue;
@@ -85,6 +88,7 @@ fhandle_t finte_node_alloc(uint16_t type, uint32_t index, uint32_t aux)
         n->refs = 0;
         n->index = index;
         n->aux = aux;
+        cpu->node_hint = (i + 1u) % FINTE_MAX_NODES;
         return finte_handle_make(i, n->gen);
     }
     return FINTE_HANDLE_NONE;

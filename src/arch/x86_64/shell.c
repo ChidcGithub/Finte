@@ -1375,11 +1375,13 @@ static void cmd_smp(const sh_ctx_t *ctx)
         if (!cpu || !cpu->online) {
             continue;
         }
-        sh_printf("cpu%u hwid=%u ticks=%llu ipis=%llu switches=%llu %s\n",
+        sh_printf("cpu%u hwid=%u ticks=%llu ipis=%llu switches=%llu "
+                  "steals=%u migrations=%u %s\n",
                   (unsigned)i, (unsigned)cpu->hw_id,
                   (unsigned long long)cpu->ticks,
                   (unsigned long long)cpu->ipis,
                   (unsigned long long)cpu->switches,
+                  (unsigned)cpu->steals, (unsigned)cpu->migrations,
                   cpu->current ? cpu->current->name : "idle");
     }
     hal_cpu_wake_all();
