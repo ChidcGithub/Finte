@@ -11,7 +11,11 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 hash=$(git rev-parse --short=7 HEAD)
-tag="v0.0.1-$hash"
+version="${1:-0.0.1-$hash}"
+case "$version" in
+    v*) tag="$version" ;;
+    *)  tag="v$version" ;;
+esac
 
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
     echo "tag already exists: $tag"

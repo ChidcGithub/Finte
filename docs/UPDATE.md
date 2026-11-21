@@ -2,6 +2,10 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-21 — nightly prereleases
+- Nightly run at 22:00 Asia/Shanghai when `main` has new commits.
+- Version `Nightly-MMDD-<commit>`; published as a prerelease with image and exe.
+
 ## 2026-11-21 — 0.0.1
 - Version bumped to 0.0.1.
 

@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  workflow_call:
+
+jobs:
+  image:
+    name: Bootable image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Build image
+        run: make image
+      - name: Run host and core checks
+        run: |
+          make test
+          ./build/finte selfcheck
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finte-image
+          path: build/finte.img
+          if-no-files-found: error
+
+  windows:
+    name: Windows host
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: cmd
+        run: build-win.bat
+      - name: Test
+        shell: cmd
+        run: build\finte.exe test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finte-exe
+          path: build\finte.exe
+          if-no-files-found: error

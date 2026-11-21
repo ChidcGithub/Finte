@@ -86,14 +86,20 @@ python3 tools/lfc1ck.py build/disk-test.img --list
 
 Builds inside a git checkout report `0.0.1-<7-char commit>`; without git they
 fall back to `0.0.1`. Pushing to `main` runs the build workflow but does not
-release. To publish, tag the current commit:
+release. To publish a stable version, tag the current commit:
 
 ```bash
-sh tools/tag_release.sh
+sh tools/tag_release.sh 0.0.1
 ```
 
-The release workflow then publishes `finte.img` and `finte.exe` with notes
-generated since the previous tag.
+The release workflow publishes `finte.img` and `finte.exe` with notes generated
+since the previous stable tag.
+
+A nightly workflow runs at **22:00 Asia/Shanghai**. If `main` has advanced since
+the last nightly, it publishes a prerelease named
+`Nightly-MMDD-<short commit>` with the same two artifacts. If nothing was pushed,
+the nightly is skipped. It can also be started manually with an optional force
+flag.
 
 Native Windows host simulator (MSVC Build Tools + LLVM `clang-cl`):
 

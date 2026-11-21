@@ -1,0 +1,93 @@
+name: Nightly prerelease
+
+on:
+  schedule:
+    # 22:00 Asia/Shanghai (14:00 UTC).
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even when HEAD is already the last nightly
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    name: Plan nightly
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve nightly version
+        id: plan
+        run: |
+          hash=$(git rev-parse --short=7 HEAD)
+          mmdd=$(TZ=Asia/Shanghai date +%m%d)
+          version="Nightly-$mmdd-$hash"
+          tag="nightly-$mmdd-$hash"
+          last=$(git tag -l 'nightly-*' --sort=-creatordate | head -n1 || true)
+          build=true
+          if [ -n "$last" ] &&
+             [ "$(git rev-parse "$last^{commit}")" = "$(git rev-parse HEAD)" ]; then
+            build=false
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] &&
+             [ "${{ inputs.force }}" = "true" ]; then
+            build=true
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "nightly: $version (build=$build)"
+
+  build:
+    name: Build nightly
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: Publish nightly
+    needs: [plan, build]
+    if: needs.plan.outputs.build == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Find previous nightly
+        id: previous
+        run: |
+          tag=$(git tag -l 'nightly-*' --sort=-creatordate |
+                 grep -vx "${{ needs.plan.outputs.tag }}" | head -n1 || true)
+          if [ -z "$tag" ]; then
+            tag=$(git tag -l 'v*' --sort=-creatordate | head -n1 || true)
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Build release notes
+        run: |
+          sh tools/release_notes.sh "${{ steps.previous.outputs.tag }}" \
+            nightly-notes.md "${{ needs.plan.outputs.tag }}"
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.plan.outputs.tag }}
+          name: Finte ${{ needs.plan.outputs.version }}
+          body_path: nightly-notes.md
+          prerelease: true
+          make_latest: false
+          files: |
+            dist/finte-image/finte.img
+            dist/finte-exe/finte.exe
+          fail_on_unmatched_files: true
