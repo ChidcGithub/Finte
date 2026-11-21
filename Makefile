@@ -15,6 +15,7 @@ CLANG    ?= clang
 LLD_LINK ?= lld-link
 PYTHON   ?= python3
 BUILD    ?= build
+$(shell mkdir -p $(BUILD))
 VERSION_HEADER := $(BUILD)/finte_version.h
 
 HOST_CFLAGS ?= -std=c11 -O2 -g -Wall -Wextra -Isrc/include -I$(BUILD)
