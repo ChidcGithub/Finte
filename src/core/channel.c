@@ -132,8 +132,7 @@ fret_t finte_chan_recv(fflow_t *f, uint16_t cap, fmsg_t *out, uint32_t flags)
     finte_memcpy(out, &ch->ring[at], sizeof(*out));
     out->cap_count = ncap;
     for (uint8_t i = 0; i < ncap; i++) {
-        int slot = finte_cap_install(f, ch->qcaps[at][i].handle,
-                                     ch->qcaps[at][i].rights);
+        int slot = finte_cap_install_cap(f, &ch->qcaps[at][i]);
         if (slot < 0) {
             for (uint8_t j = 0; j < i; j++) {
                 finte_cap_drop_index(f, out->caps[j]);

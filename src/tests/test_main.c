@@ -244,6 +244,23 @@ static void test_arena(void)
     CHECK_OK(fx_arena_free(f, 0, o3));
     CHECK_ERR(fx_arena_alloc(f, 0, 5000, 16, &o3), FINTE_ERR_NOMEM);
     CHECK_ERR(fx_arena_alloc(f, 0, 64, 32, &o3), FINTE_ERR_INVAL);
+
+    fhandle_t slice = finte_arena_create("slice", 3 * 4096);
+    CHECK(slice != FINTE_HANDLE_NONE);
+    int scap = finte_cap_install_arena_pages(f, slice, 1, 1,
+                                             FINTE_R_WRITE);
+    CHECK(scap >= 0);
+    uint64_t so1 = 0;
+    CHECK_OK(fx_arena_alloc(f, (uint16_t)scap, 64, 16, &so1));
+    CHECK(so1 >= 4096 && so1 < 8192);
+    CHECK_ERR(fx_arena_alloc(f, (uint16_t)scap, 5000, 16, &o3),
+              FINTE_ERR_NOMEM);
+    CHECK_ERR(fx_arena_free(f, (uint16_t)scap, 0), FINTE_ERR_PERM);
+    fcap_info_t info;
+    CHECK_OK(fx_cap_info(f, (uint16_t)scap, &info));
+    CHECK(info.flags & FINTE_CAP_SCOPED);
+    CHECK(info.offset == 4096 && info.length == 4096);
+    CHECK_OK(fx_arena_free(f, (uint16_t)scap, so1));
 }
 
 static uint64_t g_counter;

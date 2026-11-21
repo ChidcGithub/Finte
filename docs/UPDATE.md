@@ -2,12 +2,18 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-21 — memory isolation
+- User copy-in/out walks page tables and checks write rights.
+- Page-scoped arena caps reserve slices; `procs` maps one page per service.
+- Exited user processes return all pages; heap stays flat across runs.
+- Releases run only for pushed tags.
+
 ## 2026-11-21 — table-driven modules
 - Shell dispatch, completion and help share one command table.
 - Syscall, verb, node-release and input key maps are table-driven.
 - One ANSI parser serves VGA, GOP and scrollback; host tests now 19.
 - Version follows git: `0.0.0-<short commit>`.
-- Automated image and Windows build releases.
+- Tag-triggered image and Windows build releases.
 
 ## 2026-11-21 — 3-strike watchdog
 - Panic and power off after three abnormal events.

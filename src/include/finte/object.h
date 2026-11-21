@@ -25,7 +25,11 @@ typedef struct fcap {
     fhandle_t handle;
     uint32_t rights;
     uint32_t flags;
+    uint64_t offset;
+    uint64_t length;
 } fcap_t;
+
+#define FINTE_CAP_SCOPED 0x01u
 
 typedef enum {
     FINTE_FLOW_FREE = 0,
@@ -117,7 +121,11 @@ typedef struct fblock {
     struct fblock *next;
     uint32_t free;
     uint32_t magic;
+    uint32_t scoped;
+    uint32_t pad;
 } fblock_t;
+
+#define FINTE_ARENA_BLOCK_HDR ((sizeof(fblock_t) + 15u) & ~(size_t)15u)
 
 struct farena {
     uint8_t in_use;
@@ -229,6 +237,12 @@ uint32_t finte_node_refs(fhandle_t h);
 
 /* Capability table operations. */
 int finte_cap_install(fflow_t *f, fhandle_t h, uint32_t rights);
+int finte_cap_install_scoped(fflow_t *f, fhandle_t h, uint32_t rights,
+                             uint64_t offset, uint64_t length);
+int finte_cap_install_cap(fflow_t *f, const fcap_t *cap);
+int finte_cap_install_arena_pages(fflow_t *f, fhandle_t arena,
+                                  uint32_t first_page, uint32_t pages,
+                                  uint32_t rights);
 int finte_cap_drop_index(fflow_t *f, uint16_t cap);
 int finte_cap_check(fflow_t *f, uint16_t cap, uint32_t need, fcap_t *out);
 void finte_cap_drop_all(fflow_t *f);
@@ -255,7 +269,11 @@ void finte_sched_tick(void);
 
 /* Arena internals. */
 fret_t finte_arena_alloc(farena_t *a, size_t size, size_t align, uint64_t *offset);
+fret_t finte_arena_alloc_scoped(farena_t *a, uint64_t offset, uint64_t length,
+                                size_t size, size_t align, uint64_t *out);
+fret_t finte_arena_reserve(farena_t *a, uint64_t offset, uint64_t length);
 fret_t finte_arena_free(farena_t *a, uint64_t offset);
+fret_t finte_arena_free_scoped(farena_t *a, uint64_t offset, int scoped);
 void finte_arena_destroy(farena_t *a);
 
 #endif /* FINTE_OBJECT_H */

@@ -18,6 +18,17 @@ static int g_uefi;
 static uint8_t g_heap[KERNEL_HEAP_BYTES] __attribute__((aligned(4096)));
 static size_t g_heap_used;
 
+typedef struct page_link {
+    struct page_link *next;
+} page_link_t;
+
+static page_link_t *g_free_pages;
+static size_t g_free_page_count;
+static page_link_t *g_free_stacks;
+static size_t g_free_stack_count;
+
+#define FLOW_STACK_BYTES (32u * 1024u)
+
 static uint64_t g_fw_idt_base;
 static uint32_t g_fw_idt_limit;
 static int g_fw_active;
@@ -315,7 +326,8 @@ int hal_console_trywheel(void)
 void hal_heap_info(uint64_t *used, uint64_t *total)
 {
     if (used) {
-        *used = g_heap_used;
+        *used = g_heap_used - (uint64_t)g_free_page_count * 4096ull -
+                (uint64_t)g_free_stack_count * FLOW_STACK_BYTES;
     }
     if (total) {
         *total = KERNEL_HEAP_BYTES;
@@ -353,6 +365,10 @@ void hal_init(void)
     g_active[0] = &g_sched[0];
     g_sched[0].impl = &g_sched[0];
     g_heap_used = 0;
+    g_free_pages = NULL;
+    g_free_page_count = 0;
+    g_free_stacks = NULL;
+    g_free_stack_count = 0;
 }
 
 fcpu_t *hal_cpu_self(void)
@@ -523,6 +539,18 @@ void *hal_pages_alloc(size_t bytes)
     if (bytes == 0) {
         bytes = 4096;
     }
+    if (bytes == 4096) {
+        uint64_t flags = hal_irq_save();
+        page_link_t *page = g_free_pages;
+        if (page) {
+            g_free_pages = page->next;
+            g_free_page_count--;
+            hal_irq_restore(flags);
+            finte_memset(page, 0, 4096);
+            return page;
+        }
+        hal_irq_restore(flags);
+    }
     g_heap_used = (g_heap_used + 4095u) & ~(size_t)4095u;
     if (g_heap_used + bytes > KERNEL_HEAP_BYTES) {
         return NULL;
@@ -535,10 +563,23 @@ void *hal_pages_alloc(size_t bytes)
 
 void hal_pages_free(void *ptr, size_t bytes)
 {
-    (void)ptr;
-    (void)bytes;
-    /* v0.1 uses a bump allocator. Object lifetimes are bounded by the boot
-     * scenario; a real build would hand pages back to a frame allocator. */
+    if (!ptr || bytes == 0 || (bytes & 0xFFFu) != 0) {
+        return;
+    }
+    uintptr_t page = (uintptr_t)ptr;
+    uintptr_t base = (uintptr_t)g_heap;
+    if ((page & 0xFFFu) != 0 || page < base ||
+        page + bytes > base + KERNEL_HEAP_BYTES) {
+        return;
+    }
+    uint64_t flags = hal_irq_save();
+    for (size_t off = 0; off < bytes; off += 4096u) {
+        page_link_t *link = (page_link_t *)(page + off);
+        link->next = g_free_pages;
+        g_free_pages = link;
+        g_free_page_count++;
+    }
+    hal_irq_restore(flags);
 }
 
 fhal_ctx_t *hal_ctx_self(void)
@@ -556,12 +597,30 @@ fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes)
     if (stack_bytes < 16384) {
         stack_bytes = 16384;
     }
-    fhal_ctx_t *ctx = (fhal_ctx_t *)hal_pages_alloc(sizeof(*ctx));
+    stack_bytes = (stack_bytes + 4095u) & ~(size_t)4095u;
+    fhal_ctx_t *ctx = (fhal_ctx_t *)hal_pages_alloc(4096);
     if (!ctx) {
         return NULL;
     }
-    void *stack = hal_pages_alloc(stack_bytes);
+    void *stack = NULL;
+    if (stack_bytes == FLOW_STACK_BYTES && g_free_stacks) {
+        uint64_t flags = hal_irq_save();
+        page_link_t *block = g_free_stacks;
+        if (block) {
+            g_free_stacks = block->next;
+            g_free_stack_count--;
+            hal_irq_restore(flags);
+            stack = block;
+            finte_memset(stack, 0, stack_bytes);
+        } else {
+            hal_irq_restore(flags);
+        }
+    }
     if (!stack) {
+        stack = hal_pages_alloc(stack_bytes);
+    }
+    if (!stack) {
+        hal_pages_free(ctx, 4096);
         return NULL;
     }
     ctx->entry = entry;
@@ -587,8 +646,29 @@ fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes)
 
 void hal_ctx_destroy(fhal_ctx_t *ctx)
 {
-    (void)ctx;
-    /* The bump allocator cannot reclaim individual stacks yet. */
+    if (!ctx) {
+        return;
+    }
+    for (uint32_t i = 0; i < FINTE_MAX_CPUS; i++) {
+        if (ctx == &g_sched[i]) {
+            return;
+        }
+    }
+    void *stack = ctx->stack;
+    size_t bytes = ctx->stack_size;
+    hal_pages_free(ctx, 4096);
+    if (stack && bytes == FLOW_STACK_BYTES) {
+        uint64_t flags = hal_irq_save();
+        page_link_t *link = (page_link_t *)stack;
+        link->next = g_free_stacks;
+        g_free_stacks = link;
+        g_free_stack_count++;
+        hal_irq_restore(flags);
+        return;
+    }
+    for (size_t off = 0; stack && off < bytes; off += 4096u) {
+        hal_pages_free((uint8_t *)stack + off, 4096);
+    }
 }
 
 void hal_ctx_switch(fhal_ctx_t *from, fhal_ctx_t *to)

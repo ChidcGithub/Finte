@@ -81,9 +81,15 @@ python3 tools/lfc1ck.py build/disk-test.img --list
 ```
 
 Builds inside a git checkout report `0.0.0-<7-char commit>`; without git they
-fall back to `0.0.0`. Pushing to `main` runs the release workflow, which
-publishes `finte.img` and `finte.exe` with notes generated since the last
-release.
+fall back to `0.0.0`. Pushing to `main` runs the build workflow but does not
+release. To publish, tag the current commit:
+
+```bash
+sh tools/tag_release.sh
+```
+
+The release workflow then publishes `finte.img` and `finte.exe` with notes
+generated since the previous tag.
 
 Native Windows host simulator (MSVC Build Tools + LLVM `clang-cl`):
 
@@ -451,12 +457,14 @@ The performance argument is structural: handles are direct indexes, capability c
   specific physical laptop.
 - **Full Linux ABI.** No libc/TLS setup, no `fork`, no `clone`, no `futex`, no
   dynamic linker.
-- **Fine-grained memory windows.** An arena cap currently grants the whole
-  arena, not a slice.
+- **Arena slice lifetime.** A reserved page slice lasts until the arena is
+  destroyed; dropping a scoped cap does not unreserve it.
+- **User page permissions.** User code and data are mapped read/write; code is
+  not yet read-only or execute-only.
 
-Roadmap order: per-flow address spaces + validated syscall copy-in/out → program
-registry and dynamic linking → native NVMe/xHCI → journaled lfc1 or writable
-NTFS/ext4 → per-core scheduler shards → physical-laptop validation and a signed
+Roadmap order: user-service registry + dynamic linking → native NVMe/xHCI →
+journaled lfc1 or writable NTFS/ext4 → per-core scheduler shards →
+physical-laptop validation and a signed
 UEFI build.
 
 ## Repository map

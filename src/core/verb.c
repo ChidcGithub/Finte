@@ -15,8 +15,11 @@ static fret_t arena_alloc(fflow_t *f, uint16_t cap, size_t size, size_t align,
         return finte_ret(FINTE_ERR_TYPE, 0);
     }
     farena_t *a = &finte_core.arenas[n->index];
-    fret_t r = finte_arena_alloc(a, size, align, offset);
-    return r;
+    if (c.flags & FINTE_CAP_SCOPED) {
+        return finte_arena_alloc_scoped(a, c.offset, c.length, size, align,
+                                        offset);
+    }
+    return finte_arena_alloc(a, size, align, offset);
 }
 
 typedef fret_t (*verb_handler_t)(fflow_t *f, const uint64_t args[6]);
@@ -53,6 +56,10 @@ static fret_t verb_cap_info(fflow_t *f, const uint64_t args[6])
     out->rights = c.rights;
     out->handle = c.handle;
     out->aux = n ? n->aux : 0;
+    out->offset = c.offset;
+    out->length = c.length;
+    out->flags = c.flags;
+    out->pad = 0;
     return finte_ret_ok(0);
 }
 
@@ -67,7 +74,8 @@ static fret_t verb_cap_dup(fflow_t *f, const uint64_t args[6])
     if ((rights & ~c.rights) != 0) {
         return finte_ret(FINTE_ERR_PERM, 0);
     }
-    int slot = finte_cap_install(f, c.handle, rights);
+    c.rights = rights;
+    int slot = finte_cap_install_cap(f, &c);
     return slot < 0 ? finte_ret(slot, 0) : finte_ret_ok((uint64_t)slot);
 }
 
@@ -101,7 +109,8 @@ static fret_t verb_cap_grant(fflow_t *f, const uint64_t args[6])
     if ((rights & ~src.rights) != 0) {
         return finte_ret(FINTE_ERR_PERM, 0);
     }
-    int slot = finte_cap_install(to, src.handle, rights);
+    src.rights = rights;
+    int slot = finte_cap_install_cap(to, &src);
     return slot < 0 ? finte_ret(slot, 0) : finte_ret_ok((uint64_t)slot);
 }
 
@@ -221,6 +230,13 @@ static fret_t verb_arena_free(fflow_t *f, const uint64_t args[6])
     fnode_t *n = finte_node_get(c.handle);
     if (!n || n->type != FINTE_NODE_ARENA) {
         return finte_ret(FINTE_ERR_TYPE, 0);
+    }
+    if ((c.flags & FINTE_CAP_SCOPED) &&
+        (args[1] < c.offset || args[1] >= c.offset + c.length)) {
+        return finte_ret(FINTE_ERR_PERM, 0);
+    }
+    if (c.flags & FINTE_CAP_SCOPED) {
+        return finte_arena_free_scoped(&finte_core.arenas[n->index], args[1], 1);
     }
     return finte_arena_free(&finte_core.arenas[n->index], args[1]);
 }

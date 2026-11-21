@@ -1251,11 +1251,16 @@ static void cmd_user(const sh_ctx_t *ctx)
 static void cmd_procs(const sh_ctx_t *ctx)
 {
     (void)ctx;
-    sh_puts("starting isolated user processes...\n");
+    sh_puts("starting isolated user services...\n");
     int rc = finte_proc_demo();
     if (rc != 0) {
         sh_printf("procs: failed (status %d)\n", rc);
     }
+}
+
+static void cmd_services(const sh_ctx_t *ctx)
+{
+    cmd_procs(ctx);
 }
 
 static void cmd_ps(const sh_ctx_t *ctx)
@@ -1607,12 +1612,13 @@ static const sh_command_t sh_command_table[] = {
     { "mv", "rename a file on one filesystem", cmd_mv },
     { "parts", "list partitions", cmd_parts },
     { "preempt", "prove timer preemption with two flows", cmd_preempt },
-    { "procs", "run isolated user processes (IPC/time demo)", cmd_procs },
+    { "procs", "run isolated user services (IPC/arena/time demo)", cmd_procs },
     { "ps", "list live flows", cmd_ps },
     { "pwd", "current directory", cmd_pwd },
     { "reboot", "reset the machine", cmd_reboot },
     { "rm", "remove a file or empty directory", cmd_rm },
     { "selfcheck", "run the 147-check core suite", cmd_selfcheck },
+    { "services", "run isolated user services (IPC/arena demo)", cmd_services },
     { "shutdown", "stop the machine", cmd_shutdown },
     { "smp", "show per-CPU scheduler state", cmd_smp },
     { "stat", "show file size", cmd_stat },

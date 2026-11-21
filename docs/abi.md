@@ -111,7 +111,7 @@ fret_t finte_syscall(fflow_t *flow, uint32_t verb, const uint64_t args[6]);
 | `CONSOLE_WRITE` | `WRITE` | console |
 | `FILE_READ` | `READ` | file |
 | `FILE_WRITE` | `WRITE` | file |
-| `ARENA_ALLOC/FREE` | `WRITE` | arena |
+| `ARENA_ALLOC/FREE` | `WRITE` | arena; scoped caps stay inside their page range |
 | `CAP_GRANT` (on target) | `GRANT` | flow |
 | `FLOW_WAIT` | `CONTROL` | flow |
 | `CHAN_CLOSE` | `CONTROL` | channel |
@@ -127,6 +127,10 @@ typedef struct fcap_info {
     uint32_t rights;
     uint64_t handle;
     uint64_t aux;
+    uint64_t offset;   /* scoped arena window */
+    uint64_t length;
+    uint32_t flags;    /* FINTE_CAP_SCOPED */
+    uint32_t pad;
 } fcap_info_t;
 
 typedef struct fflow_info {

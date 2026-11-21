@@ -14,6 +14,7 @@
 #define SYS_IPC_SEND 210
 #define SYS_IPC_RECV 211
 #define SYS_SHM_ADDR 220
+#define SYS_ARENA_MAP 230
 
 #define SHM_MAGIC 0
 #define SHM_HEARTBEAT 8
@@ -22,6 +23,7 @@
 #define SHM_SECRET_VALUE 32
 #define SHM_ELAPSED 40
 #define SHM_SPIN 48
+#define SHM_ARENA_MARK 56
 
 #define MAGIC 0xF17E5EED12345678ull
 #define IPC_TAG 0x5EED5EEDull
@@ -31,6 +33,9 @@
 #define FLAG_SHM (1ull << 2)
 #define FLAG_TIME (1ull << 3)
 #define FLAG_PREEMPT (1ull << 4)
+#define FLAG_ARENA (1ull << 5)
+#define FLAG_ARENA_DENY (1ull << 6)
+#define ARENA_MARK 0x1111111122222222ull
 
 static volatile uint64_t secret;
 static volatile uint64_t sink;
@@ -99,6 +104,16 @@ static void role_sender(volatile uint64_t *shm)
     shm[SHM_SECRET_ADDR / 8] = (uint64_t)&secret;
     shm[SHM_SECRET_VALUE / 8] = secret;
 
+    long arena_addr = sys1(SYS_ARENA_MAP, 1);
+    if (arena_addr > 0) {
+        volatile uint64_t *arena = (volatile uint64_t *)(uintptr_t)arena_addr;
+        arena[0] = ARENA_MARK;
+        shm[SHM_ARENA_MARK / 8] = ARENA_MARK;
+        print("[pid 1] arena page mapped\n");
+    } else {
+        print("[pid 1] arena page denied\n");
+    }
+
     uint64_t msg[3];
     msg[0] = (uint64_t)&secret;
     msg[1] = secret;
@@ -132,6 +147,17 @@ static void role_receiver(volatile uint64_t *shm)
     int shm_ok = shm[SHM_MAGIC / 8] == MAGIC;
     int time_ok = t1 >= t0 && t1 - t0 >= 45000000ull;
 
+    long arena_addr = sys1(SYS_ARENA_MAP, 1);
+    int arena_ok = 0;
+    if (arena_addr > 0) {
+        volatile uint64_t *arena = (volatile uint64_t *)(uintptr_t)arena_addr;
+        uint64_t before = arena[0];
+        arena[0] = 0x3333333344444444ull;
+        uint64_t after = arena[0];
+        arena_ok = before == 0 && after == 0x3333333344444444ull &&
+                   shm[SHM_ARENA_MARK / 8] == ARENA_MARK;
+    }
+
     if (ipc_ok) {
         shm[SHM_FLAGS / 8] |= FLAG_IPC;
     }
@@ -144,6 +170,9 @@ static void role_receiver(volatile uint64_t *shm)
     if (time_ok) {
         shm[SHM_FLAGS / 8] |= FLAG_TIME;
     }
+    if (arena_ok) {
+        shm[SHM_FLAGS / 8] |= FLAG_ARENA;
+    }
     shm[SHM_ELAPSED / 8] = t1 - t0;
 
     print("[pid 2] ipc=");
@@ -152,6 +181,8 @@ static void role_receiver(volatile uint64_t *shm)
     print_flag(iso_ok);
     print(" shm=");
     print_flag(shm_ok);
+    print(" arena=");
+    print_flag(arena_ok);
     print(" sleep=");
     print_flag(time_ok);
     print(" elapsed=");
@@ -162,6 +193,9 @@ static void role_receiver(volatile uint64_t *shm)
 
 static void role_spinner(volatile uint64_t *shm)
 {
+    if (sys1(SYS_ARENA_MAP, 1) == -1) {
+        shm[SHM_FLAGS / 8] |= FLAG_ARENA_DENY;
+    }
     uint64_t t0 = (uint64_t)sys1(SYS_TIME, 0);
     uint64_t count = 0;
     for (;;) {

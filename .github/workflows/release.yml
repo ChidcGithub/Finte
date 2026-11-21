@@ -3,6 +3,7 @@ name: Build and release
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -53,7 +54,7 @@ jobs:
   release:
     name: Publish release
     needs: [image, windows]
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,19 +65,18 @@ jobs:
           path: dist
       - name: Resolve version
         id: version
-        run: echo "value=0.0.0-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Find previous release
         id: previous
         run: |
-          current="v${{ steps.version.outputs.value }}"
-          tag=$(git tag --sort=-creatordate | grep -vx "$current" | head -n1 || true)
+          tag=$(git tag --sort=-creatordate | grep -vx "$GITHUB_REF_NAME" | head -n1 || true)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Build release notes
-        run: sh tools/release_notes.sh "${{ steps.previous.outputs.tag }}" release-notes.md "v${{ steps.version.outputs.value }}"
+        run: sh tools/release_notes.sh "${{ steps.previous.outputs.tag }}" release-notes.md "$GITHUB_REF_NAME"
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.value }}
+          tag_name: ${{ github.ref_name }}
           name: Finte v${{ steps.version.outputs.value }}
           body_path: release-notes.md
           files: |

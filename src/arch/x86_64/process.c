@@ -38,6 +38,7 @@ typedef struct __attribute__((packed)) elf64_phdr {
 
 #define PROC_STACK_PAGES 4
 #define PROC_STACK_BYTES (PROC_STACK_PAGES * 4096u)
+#define FPROC_MAX_PAGES 128
 
 #define DEMO_SHM_MAGIC 0xF17E5EED12345678ull
 #define DEMO_IPC_FLAG    (1u << 0)
@@ -45,6 +46,8 @@ typedef struct __attribute__((packed)) elf64_phdr {
 #define DEMO_SHM_FLAG    (1u << 2)
 #define DEMO_TIME_FLAG   (1u << 3)
 #define DEMO_PREEMPT_FLAG (1u << 4)
+#define DEMO_ARENA_FLAG  (1u << 5)
+#define DEMO_ARENA_DENY_FLAG (1u << 6)
 
 typedef struct demo_shm {
     volatile uint64_t magic;
@@ -70,9 +73,12 @@ typedef struct fproc {
     fflow_t *flow;
     fhandle_t flow_handle;
     int ipc_cap;
+    int arena_cap;
     int faulted;
     uint8_t expected_fault;
     char name[FINTE_NAME_MAX];
+    uint64_t pages[FPROC_MAX_PAGES];
+    uint32_t page_count;
 } fproc_t;
 
 static uint64_t g_kernel_pd[4][512] __attribute__((aligned(4096)));
@@ -109,6 +115,38 @@ static void *alloc_page(void)
     return p;
 }
 
+static void *proc_alloc_raw(fproc_t *p)
+{
+    void *page = alloc_page();
+    if (!page) {
+        return NULL;
+    }
+    if (p->page_count >= FPROC_MAX_PAGES) {
+        hal_pages_free(page, 4096);
+        return NULL;
+    }
+    p->pages[p->page_count++] = ptr_phys(page);
+    return page;
+}
+
+static void proc_destroy(fproc_t *p)
+{
+    if (!p) {
+        return;
+    }
+    if (finte_handle_valid(p->flow_handle) && p->flow) {
+        finte_cap_drop_all(p->flow);
+    }
+    if (finte_handle_valid(p->flow_handle)) {
+        finte_node_unref(p->flow_handle);
+    }
+    for (uint32_t i = 0; i < p->page_count; i++) {
+        hal_pages_free((void *)(uintptr_t)p->pages[i], 4096);
+    }
+    p->page_count = 0;
+    hal_pages_free(p, 4096);
+}
+
 static void kernel_pd_init(void)
 {
     if (g_kernel_pd_ready) {
@@ -135,7 +173,7 @@ static uint64_t *proc_pte(fproc_t *p, uint64_t va, int create)
         if (!create) {
             return NULL;
         }
-        uint64_t *pt = (uint64_t *)alloc_page();
+        uint64_t *pt = (uint64_t *)proc_alloc_raw(p);
         if (!pt) {
             return NULL;
         }
@@ -158,7 +196,7 @@ static int proc_map_page(fproc_t *p, uint64_t va, uint64_t phys)
 
 static void *proc_alloc_page(fproc_t *p, uint64_t va)
 {
-    void *page = alloc_page();
+    void *page = proc_alloc_raw(p);
     if (!page) {
         return NULL;
     }
@@ -178,7 +216,7 @@ static void *proc_page_ptr(fproc_t *p, uint64_t va, int alloc)
         if (!alloc) {
             return NULL;
         }
-        void *page = alloc_page();
+        void *page = proc_alloc_raw(p);
         if (!page) {
             return NULL;
         }
@@ -190,9 +228,9 @@ static void *proc_page_ptr(fproc_t *p, uint64_t va, int alloc)
 static int proc_build_space(fproc_t *p)
 {
     kernel_pd_init();
-    p->pml4 = (uint64_t *)alloc_page();
-    p->pdpt = (uint64_t *)alloc_page();
-    p->user_pd = (uint64_t *)alloc_page();
+    p->pml4 = (uint64_t *)proc_alloc_raw(p);
+    p->pdpt = (uint64_t *)proc_alloc_raw(p);
+    p->user_pd = (uint64_t *)proc_alloc_raw(p);
     if (!p->pml4 || !p->pdpt || !p->user_pd) {
         return FINTE_ERR_NOMEM;
     }
@@ -273,7 +311,7 @@ static int proc_load_elf(fproc_t *p, const char *name)
     return 0;
 }
 
-static int proc_user_ok(fproc_t *p, uint64_t va, uint64_t len)
+static int proc_user_ok(fproc_t *p, uint64_t va, uint64_t len, int write)
 {
     if (len == 0) {
         return 1;
@@ -291,11 +329,75 @@ static int proc_user_ok(fproc_t *p, uint64_t va, uint64_t len)
     }
     for (uint64_t page = va & ~0xFFFull; page < va + len; page += 4096u) {
         uint64_t *pte = proc_pte(p, page, 0);
-        if (!pte || (*pte & 1u) == 0 || (*pte & 4u) == 0) {
+        uint64_t need = 1u | (write ? 2u : 0u) | 4u;
+        if (!pte || (*pte & need) != need) {
             return 0;
         }
     }
     return 1;
+}
+
+static int proc_copy_in(fproc_t *p, void *dst, uint64_t uva, size_t len)
+{
+    if (!proc_user_ok(p, uva, len, 0)) {
+        return -1;
+    }
+    if (!p) {
+        finte_memcpy(dst, (const void *)(uintptr_t)uva, len);
+        return 0;
+    }
+    while (len) {
+        uint64_t page = uva & ~0xFFFull;
+        uint64_t *pte = proc_pte(p, page, 0);
+        size_t off = (size_t)(uva - page);
+        size_t chunk = 4096u - off;
+        if (chunk > len) {
+            chunk = len;
+        }
+        finte_memcpy(dst, (const void *)(uintptr_t)((*pte & ~0xFFFull) + off),
+                     chunk);
+        dst = (uint8_t *)dst + chunk;
+        uva += chunk;
+        len -= chunk;
+    }
+    return 0;
+}
+
+static int proc_copy_out(fproc_t *p, uint64_t uva, const void *src, size_t len)
+{
+    if (!proc_user_ok(p, uva, len, 1)) {
+        return -1;
+    }
+    if (!p) {
+        finte_memcpy((void *)(uintptr_t)uva, src, len);
+        return 0;
+    }
+    while (len) {
+        uint64_t page = uva & ~0xFFFull;
+        uint64_t *pte = proc_pte(p, page, 0);
+        size_t off = (size_t)(uva - page);
+        size_t chunk = 4096u - off;
+        if (chunk > len) {
+            chunk = len;
+        }
+        finte_memcpy((void *)(uintptr_t)((*pte & ~0xFFFull) + off), src, chunk);
+        src = (const uint8_t *)src + chunk;
+        uva += chunk;
+        len -= chunk;
+    }
+    return 0;
+}
+
+int finte_user_copy_in(fflow_t *f, void *dst, uint64_t uva, size_t len)
+{
+    fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+    return proc_copy_in(p, dst, uva, len);
+}
+
+int finte_user_copy_out(fflow_t *f, uint64_t uva, const void *src, size_t len)
+{
+    fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+    return proc_copy_out(p, uva, src, len);
 }
 
 static void user_process_entry(fflow_t *f)
@@ -315,7 +417,9 @@ static const fprogram_t g_user_program = {
 
 static fproc_t *proc_create(const char *name, const char *elf, uint32_t pid,
                             uint32_t cpu, uint64_t shared_phys,
-                            fhandle_t chan, uint32_t rights)
+                            fhandle_t chan, uint32_t rights,
+                            fhandle_t arena, uint32_t arena_page,
+                            uint32_t arena_rights)
 {
     static int stage;
     static int last_rc;
@@ -329,6 +433,7 @@ static fproc_t *proc_create(const char *name, const char *elf, uint32_t pid,
     p->cpu = cpu;
     p->shared_phys = shared_phys;
     p->ipc_cap = -1;
+    p->arena_cap = -1;
     finte_strlcpy(p->name, name, sizeof(p->name));
     stage = 2;
     last_rc = proc_build_space(p);
@@ -379,6 +484,15 @@ static fproc_t *proc_create(const char *name, const char *elf, uint32_t pid,
         }
         p->ipc_cap = slot;
     }
+    if (finte_handle_valid(arena) && arena_rights) {
+        int slot = finte_cap_install_arena_pages(p->flow, arena, arena_page, 1,
+                                                 arena_rights);
+        if (slot < 0) {
+            last_rc = slot;
+            goto fail;
+        }
+        p->arena_cap = slot;
+    }
     return p;
 
 fail: {
@@ -388,6 +502,13 @@ fail: {
                              (unsigned)pid, stage, last_rc);
         hal_console_write(buf, (size_t)n);
     }
+    if (finte_handle_valid(p->flow_handle) && p->flow) {
+        finte_cap_drop_all(p->flow);
+    }
+    if (finte_handle_valid(p->flow_handle)) {
+        finte_node_unref(p->flow_handle);
+    }
+    proc_destroy(p);
     return NULL;
 }
 
@@ -437,10 +558,21 @@ uint64_t finte_process_syscall(uint64_t *regs)
     fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
 
     if (nr == FPROC_SYS_WRITE) {
-        if (a1 > 1024u * 1024u || !proc_user_ok(p, a0, a1)) {
+        if (a1 > 1024u * 1024u) {
             return (uint64_t)-1;
         }
-        hal_console_write((const char *)(uintptr_t)a0, (size_t)a1);
+        char buf[256];
+        uint64_t left = a1;
+        uint64_t at = a0;
+        while (left) {
+            size_t chunk = left > sizeof(buf) ? sizeof(buf) : (size_t)left;
+            if (finte_user_copy_in(f, buf, at, chunk) != 0) {
+                return (uint64_t)-1;
+            }
+            hal_console_write(buf, chunk);
+            at += chunk;
+            left -= chunk;
+        }
         return a1;
     }
     if (nr == FPROC_SYS_GETPID) {
@@ -475,14 +607,15 @@ uint64_t finte_process_syscall(uint64_t *regs)
         return 0;
     }
     if (nr == FPROC_SYS_IPC_SEND) {
-        if (!p || !f || a2 > FINTE_MSG_DATA ||
-            !proc_user_ok(p, a1, a2)) {
+        if (!p || !f || a2 > FINTE_MSG_DATA) {
             return (uint64_t)-1;
         }
         fmsg_t msg;
         finte_memset(&msg, 0, sizeof(msg));
         msg.len = (uint16_t)a2;
-        finte_memcpy(msg.data, (const void *)(uintptr_t)a1, (size_t)a2);
+        if (finte_user_copy_in(f, msg.data, a1, (size_t)a2) != 0) {
+            return (uint64_t)-1;
+        }
         fret_t r = finte_chan_send(f, (uint16_t)a0, &msg, 0);
         return finte_failed(r) ? (uint64_t)-1 : a2;
     }
@@ -499,14 +632,39 @@ uint64_t finte_process_syscall(uint64_t *regs)
         if (n > a2) {
             n = a2;
         }
-        if (!proc_user_ok(p, a1, n)) {
+        if (finte_user_copy_out(f, a1, msg.data, (size_t)n) != 0) {
             return (uint64_t)-1;
         }
-        finte_memcpy((void *)(uintptr_t)a1, msg.data, (size_t)n);
         return n;
     }
     if (nr == FPROC_SYS_SHM_ADDR) {
         return p ? FPROC_SHARED_VA : 0;
+    }
+    if (nr == FPROC_SYS_ARENA_MAP) {
+        if (!p || !f) {
+            return (uint64_t)-1;
+        }
+        fcap_t c;
+        if (finte_cap_check(f, (uint16_t)a0, FINTE_R_WRITE, &c) < 0 ||
+            !(c.flags & FINTE_CAP_SCOPED) || c.length == 0 ||
+            c.length > FPROC_ARENA_MAX_PAGES * 4096ull) {
+            return (uint64_t)-1;
+        }
+        fnode_t *n = finte_node_get(c.handle);
+        if (!n || n->type != FINTE_NODE_ARENA) {
+            return (uint64_t)-1;
+        }
+        farena_t *a = &finte_core.arenas[n->index];
+        if (c.offset + c.length > a->size) {
+            return (uint64_t)-1;
+        }
+        for (uint64_t off = 0; off < c.length; off += 4096u) {
+            if (proc_map_page(p, FPROC_ARENA_VA + off,
+                              ptr_phys(a->base + c.offset + off)) != 0) {
+                return (uint64_t)-1;
+            }
+        }
+        return FPROC_ARENA_VA + FINTE_ARENA_BLOCK_HDR;
     }
     return (uint64_t)-1;
 }
@@ -531,20 +689,20 @@ int finte_usermode_run(const char *name)
         return FINTE_ERR_STATE;
     }
     proc_begin();
-    fproc_t *p = proc_create("user", name, 1, 0, 0, 0, 0);
+    fproc_t *p = proc_create("user", name, 1, 0, 0, 0, 0, 0, 0, 0);
     if (!p) {
         return FINTE_ERR_NOMEM;
     }
     int rc = proc_start(p);
     if (rc != 0) {
+        proc_destroy(p);
         return rc;
     }
     finte_run();
     write_cr3(g_kernel_cr3);
-    if (g_user_faults) {
-        return FINTE_ERR_FAULT;
-    }
-    return finte_run_status();
+    int status = g_user_faults ? FINTE_ERR_FAULT : finte_run_status();
+    proc_destroy(p);
+    return status;
 }
 
 int finte_proc_demo(void)
@@ -560,20 +718,36 @@ int finte_proc_demo(void)
     }
     demo_shm_t *shm = (demo_shm_t *)alloc_page();
     if (!shm) {
+        finte_node_unref(chan);
         return FINTE_ERR_NOMEM;
     }
     shm->magic = DEMO_SHM_MAGIC;
 
-    fproc_t *p1 = proc_create("proc-ipc", "ipc.elf", 1, 0,
-                              ptr_phys(shm), chan, FINTE_R_SEND);
-    fproc_t *p2 = proc_create("proc-rx", "ipc.elf", 2, 0,
-                              ptr_phys(shm), chan, FINTE_R_RECV);
-    fproc_t *p3 = proc_create("proc-spin", "ipc.elf", 3, 0,
-                              ptr_phys(shm), 0, 0);
-    fproc_t *p4 = proc_create("proc-watch", "ipc.elf", 4, 0,
-                              ptr_phys(shm), 0, 0);
-    if (!p1 || !p2 || !p3 || !p4) {
+    fhandle_t arena = finte_arena_create("svc-arena", 2 * 4096);
+    if (!finte_handle_valid(arena)) {
+        hal_pages_free(shm, 4096);
+        finte_node_unref(chan);
         return FINTE_ERR_NOMEM;
+    }
+
+    fproc_t *p1 = NULL;
+    fproc_t *p2 = NULL;
+    fproc_t *p3 = NULL;
+    fproc_t *p4 = NULL;
+    int result = FINTE_ERR_NOMEM;
+
+    p1 = proc_create("proc-ipc", "ipc.elf", 1, 0,
+                     ptr_phys(shm), chan, FINTE_R_SEND,
+                     arena, 0, FINTE_R_WRITE);
+    p2 = proc_create("proc-rx", "ipc.elf", 2, 0,
+                     ptr_phys(shm), chan, FINTE_R_RECV,
+                     arena, 1, FINTE_R_WRITE);
+    p3 = proc_create("proc-spin", "ipc.elf", 3, 0,
+                     ptr_phys(shm), 0, 0, 0, 0, 0);
+    p4 = proc_create("proc-watch", "ipc.elf", 4, 0,
+                     ptr_phys(shm), 0, 0, 0, 0, 0);
+    if (!p1 || !p2 || !p3 || !p4) {
+        goto out;
     }
     /* PID 1 probes supervisor memory on purpose: contained and expected. */
     p1->expected_fault = 1;
@@ -584,7 +758,8 @@ int finte_proc_demo(void)
     rc |= proc_start(p3);
     rc |= proc_start(p4);
     if (rc != 0) {
-        return FINTE_ERR_STATE;
+        result = FINTE_ERR_STATE;
+        goto out;
     }
 
     finte_run();
@@ -597,17 +772,30 @@ int finte_proc_demo(void)
     int time_ok = (shm->flags & DEMO_TIME_FLAG) != 0;
     int preempt = (shm->flags & DEMO_PREEMPT_FLAG) != 0 &&
                   shm->heartbeat > 0;
+    int arena_ok = (shm->flags & (DEMO_ARENA_FLAG | DEMO_ARENA_DENY_FLAG)) ==
+                   (DEMO_ARENA_FLAG | DEMO_ARENA_DENY_FLAG);
     int fault_ok = g_user_faults == 1;
 
     char buf[256];
     int n = finte_format(buf, sizeof(buf),
-                         "[procs] ipc=%s isolation=%s shm=%s time=%s "
-                         "preempt=%s fault=%s heartbeat=%llu\n",
+                         "[procs] ipc=%s isolation=%s shm=%s arena=%s "
+                         "time=%s preempt=%s fault=%s heartbeat=%llu\n",
                          ok_str(ipc), ok_str(iso), ok_str(shm_ok),
-                         ok_str(time_ok), ok_str(preempt), ok_str(fault_ok),
+                         ok_str(arena_ok), ok_str(time_ok), ok_str(preempt),
+                         ok_str(fault_ok),
                          (unsigned long long)shm->heartbeat);
     hal_console_write(buf, (size_t)n);
 
-    int all = ipc && iso && shm_ok && time_ok && preempt && fault_ok;
-    return all ? 0 : FINTE_ERR_STATE;
+    result = (ipc && iso && shm_ok && arena_ok && time_ok && preempt &&
+              fault_ok) ? 0 : FINTE_ERR_STATE;
+
+out:
+    proc_destroy(p1);
+    proc_destroy(p2);
+    proc_destroy(p3);
+    proc_destroy(p4);
+    finte_node_unref(arena);
+    hal_pages_free(shm, 4096);
+    finte_node_unref(chan);
+    return result;
 }

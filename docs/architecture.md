@@ -187,8 +187,10 @@ An arena is a page-backed region with a first-fit allocator:
 - Payloads are 16-byte aligned.
 - Allocation splits a free block when the remainder is useful.
 - Free coalesces adjacent free blocks.
-- `ARENA_ALLOC` returns an **offset**, not a pointer. The owner computes `arena->base + offset`; another flow with an arena cap can do the same. In a future user-mode port, this becomes a mapped window.
-- `ARENA_FREE` is explicit. There is no compaction and no moving GC.
+- `ARENA_ALLOC` returns an **offset**, not a pointer. The owner computes `arena->base + offset`; another flow with an arena cap can do the same.
+- A cap may be scoped to a page range. Reserving the range splits the block list so a slice cannot overlap a neighbor, and scoped `ARENA_ALLOC` only uses blocks fully inside it.
+- A scoped user service maps its page at `FPROC_ARENA_VA`; the mapped payload begins after the block header.
+- `ARENA_FREE` is explicit and scoped caps cannot free outside their range. There is no compaction and no moving GC.
 - `mmap` in the Linux persona allocates from an arena and returns a host/kernel pointer directly.
 
 The arena is the intended bulk-data path: a producer allocates, writes, sends the arena cap plus offsets, and the consumer reads in place. This is why the channel message is only 48 bytes.
@@ -503,13 +505,19 @@ User processes use a private PML4 built by `src/arch/x86_64/process.c`:
   page tables, firmware memory or the kernel image at 64 MiB.
 - Each process gets private 4 KiB mappings at 4 GiB: ELF `PT_LOAD` segments are
   copied into freshly zeroed pages, a 16 KiB stack is mapped just below
-  4 GiB + 64 MiB, and an optional shared page is mapped at 4 GiB + 128 MiB.
-- The PML4/PDPT/PD/PT pages and the user data pages come from the kernel's bump
-  heap. Teardown does not free them yet.
-- Every user pointer is validated by walking the process page tables
-  (`proc_user_ok`) before copy-in/copy-out. A user-mode fault (#PF, #GP, #UD)
-  prints the PID, faulting RIP and CR2, then kills only that flow; kernel faults
-  still panic.
+  4 GiB + 64 MiB, an optional shared page is mapped at 4 GiB + 128 MiB, and a
+  page-scoped arena window is mapped at 4 GiB + 192 MiB.
+- The PML4/PDPT/PD/PT pages, user data pages and the process record come from
+  the kernel page heap. Teardown switches back to the kernel CR3, then returns
+  every tracked page. Flow stacks are also recycled.
+- User pointers go through `finte_user_copy_in` / `finte_user_copy_out`, which
+  check the user range, walk every page, require the user and write bits as
+  needed, and copy through the physical mappings.
+- A page-scoped arena cap reserves a page slice in the block list. Allocation
+  from that cap stays inside the slice, and a whole-arena cap cannot allocate
+  or free inside it.
+- A user-mode fault (#PF, #GP, #UD) prints the PID, faulting RIP and CR2, then
+  kills only that flow; kernel faults still panic.
 - User processes currently run on the BSP because the kernel uses one TSS.
   Kernel flows keep using all CPUs.
 
@@ -526,6 +534,7 @@ The native user ABI is `int 0x80` with `rax` as the call number:
 | `ipc_send` | 210 | send up to 48 bytes through a `SEND` capability |
 | `ipc_recv` | 211 | block for a message through a `RECV` capability |
 | `shm_addr` | 220 | return the process's shared-page VA |
+| `arena_map` | 230 | map a page-scoped arena cap at its fixed VA |
 
 `procs` exercises this ABI with four processes: message passing, shared memory,
 private-data isolation, a 50 ms sleep, two CPU-bound tasks with a heartbeat, and

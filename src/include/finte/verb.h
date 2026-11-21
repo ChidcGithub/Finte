@@ -40,6 +40,10 @@ typedef struct fcap_info {
     uint32_t rights;
     uint64_t handle;
     uint64_t aux;
+    uint64_t offset;
+    uint64_t length;
+    uint32_t flags;
+    uint32_t pad;
 } fcap_info_t;
 
 #define FINTE_OPEN_READ 1u
