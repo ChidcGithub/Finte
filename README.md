@@ -1,5 +1,7 @@
 # Finte
 
+[![Build and release](https://github.com/ChidcGithub/Finte/actions/workflows/release.yml/badge.svg)](https://github.com/ChidcGithub/Finte/actions/workflows/release.yml)
+
 **A finite, capability-first system core.** Linux-class responsibilities, a deliberately different shape.
 
 Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own BIOS bootloader** and **own UEFI loader**, runs the same core as a host simulator, and carries a Linux syscall personality on top. It is not a Linux clone: it replaces the parts of a kernel that shape how software is written.
