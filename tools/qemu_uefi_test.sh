@@ -19,11 +19,11 @@ rm -f build/uefi-cli.log
 if grep -q "pipeline=OK" build/uefi-cli.log &&
    grep -q "persona=OK" build/uefi-cli.log &&
    grep -q "hello.txt" build/uefi-cli.log &&
-   grep -q "Finte 0.0.0" build/uefi-cli.log &&
-   grep -q "Finte (base) 0.0.0" build/uefi-cli.log &&
+   grep -q "Finte 0.0.1" build/uefi-cli.log &&
+   grep -q "Finte (base) 0.0.1" build/uefi-cli.log &&
    grep -q "UEFI loader" build/uefi-cli.log; then
     echo "UEFI CLI boot test: OK"
-    grep -E "UEFI loader|Finte \(base\) 0.0.0|Finte 0.0.0|hello.txt|pipeline=OK|persona=OK|bye" \
+    grep -E "UEFI loader|Finte \(base\) 0.0.1|Finte 0.0.1|hello.txt|pipeline=OK|persona=OK|bye" \
         build/uefi-cli.log
     exit 0
 fi

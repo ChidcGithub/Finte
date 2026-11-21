@@ -512,7 +512,11 @@ fail: {
 
 static int proc_start(fproc_t *p)
 {
-    return finte_flow_start(p->flow_handle).status;
+    int rc = finte_flow_start(p->flow_handle).status;
+    if (rc == 0 && p->flow && p->flow->ctx) {
+        p->flow->ctx->addr_space = p->pml4_phys;
+    }
+    return rc;
 }
 
 void finte_user_fault(uint64_t vec, uint64_t rip, uint64_t cr2)

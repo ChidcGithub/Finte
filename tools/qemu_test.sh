@@ -16,10 +16,10 @@ rm -f build/cli.log
 if grep -q "pipeline=OK" build/cli.log &&
    grep -q "persona=OK" build/cli.log &&
    grep -q "hello.txt" build/cli.log &&
-   grep -q "Finte 0.0.0" build/cli.log &&
-   grep -q "Finte (base) 0.0.0" build/cli.log; then
+   grep -q "Finte 0.0.1" build/cli.log &&
+   grep -q "Finte (base) 0.0.1" build/cli.log; then
     echo "CLI boot test: OK"
-    grep -E "Finte \(base\) 0.0.0|Finte 0.0.0|hello.txt|pipeline=OK|persona=OK|bye" build/cli.log
+    grep -E "Finte \(base\) 0.0.1|Finte 0.0.1|hello.txt|pipeline=OK|persona=OK|bye" build/cli.log
     exit 0
 fi
 

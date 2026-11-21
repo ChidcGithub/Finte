@@ -20,7 +20,7 @@ Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own 
 
 ## Status
 
-- **v0.0.0** (nickname **base**), built as `0.0.0-<short commit>`, 19 self-tests passing on Linux/WSL and Windows.
+- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 19 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, and a PE32+ UEFI loader with a FAT32 ESP. One hybrid raw image contains both.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
@@ -84,8 +84,8 @@ make qemu-arm64     # interactive arm64 serial console
 python3 tools/lfc1ck.py build/disk-test.img --list
 ```
 
-Builds inside a git checkout report `0.0.0-<7-char commit>`; without git they
-fall back to `0.0.0`. Pushing to `main` runs the build workflow but does not
+Builds inside a git checkout report `0.0.1-<7-char commit>`; without git they
+fall back to `0.0.1`. Pushing to `main` runs the build workflow but does not
 release. To publish, tag the current commit:
 
 ```bash
@@ -224,7 +224,7 @@ The kernel refuses to start user work until the core passes its POST:
 
 [    4.431100] Finte shell. Type 'help' for commands.
 [    4.445840] boot: custom BIOS loader
-[    4.466978] Finte (base) 0.0.0
+[    4.466978] Finte (base) 0.0.1
 [    4.494982] Welcome to Finte.
 ```
 

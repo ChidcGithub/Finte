@@ -746,7 +746,7 @@ void hal_ctx_switch(fhal_ctx_t *from, fhal_ctx_t *to)
     fcpu_t *cpu = hal_cpu_self();
     uint32_t id = cpu->id < FINTE_MAX_CPUS ? cpu->id : 0;
     g_active[id] = to;
-    if (to->stack && to->stack_size) {
+    if (to->stack && to->stack_size && to->addr_space) {
         hal_user_bind_stack((uint8_t *)to->stack + to->stack_size);
     }
     if (to->addr_space) {

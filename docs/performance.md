@@ -57,7 +57,7 @@ The Windows fiber path is much faster for channel switching (223 ns vs 734 ns) a
 
 `make image` produces:
 
-- `build/kernel64.bin`: **145,568 bytes** of flat 64-bit kernel text/data (v0.0.0, GCC 15, `-O2`).
+- `build/kernel64.bin`: **145,568 bytes** of flat 64-bit kernel text/data (v0.0.1, GCC 15, `-O2`).
 - `build/finte.img`: **68,157,440 bytes** hybrid BIOS+UEFI USB image (64 MiB FAT32 ESP).
 - `build/initrd.bin`: **12,816 bytes** with `init.elf` and `ipc.elf`.
 - `build/init.elf`: **5,088 bytes** · `build/ipc.elf`: **7,040 bytes**.

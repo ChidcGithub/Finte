@@ -126,10 +126,13 @@ void finte_flow_sleep(fflow_t *f, uint64_t ns)
         return;
     }
     finte_core_lock();
+    f->blocking = 1;
     finte_sched_sleep(f, hal_now_ns() + ns);
     uint32_t depth = finte_core_lock_suspend();
     hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
     finte_core_lock_resume(depth);
+    f->blocking = 0;
+    f->wake_pending = 0;
     f->state = FINTE_FLOW_RUNNING;
     finte_core_unlock();
 }
@@ -140,7 +143,8 @@ void finte_flow_block(fflow_t *f, fchan_t *ch, int is_send)
         return;
     }
     finte_core_lock();
-    f->state = FINTE_FLOW_BLOCKED;
+    f->state = FINTE_FLOW_RUNNING;
+    f->blocking = 1;
     f->wait_chan = ch;
     f->wait_send = (uint8_t)(is_send ? 1 : 0);
     f->wait_next = NULL;
@@ -157,6 +161,8 @@ void finte_flow_block(fflow_t *f, fchan_t *ch, int is_send)
     uint32_t depth = finte_core_lock_suspend();
     hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
     finte_core_lock_resume(depth);
+    f->blocking = 0;
+    f->wake_pending = 0;
     f->state = FINTE_FLOW_RUNNING;
     finte_core_unlock();
 }
@@ -171,7 +177,8 @@ void finte_flow_wait_for(fflow_t *f, fflow_t *target)
         finte_core_unlock();
         return;
     }
-    f->state = FINTE_FLOW_BLOCKED;
+    f->state = FINTE_FLOW_RUNNING;
+    f->blocking = 1;
     f->wait_chan = NULL;
     f->wait_send = 0;
     f->wait_next = target->waiters;
@@ -179,6 +186,8 @@ void finte_flow_wait_for(fflow_t *f, fflow_t *target)
     uint32_t depth = finte_core_lock_suspend();
     hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
     finte_core_lock_resume(depth);
+    f->blocking = 0;
+    f->wake_pending = 0;
     f->state = FINTE_FLOW_RUNNING;
     finte_core_unlock();
 }

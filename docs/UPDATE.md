@@ -2,6 +2,9 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-21 — 0.0.1
+- Version bumped to 0.0.1.
+
 ## 2026-11-21 — per-CPU scheduling
 - Per-CPU run-queue locks, loops, work stealing and migration API.
 - Per-CPU GDT/TSS lets user flows run on APs.
@@ -23,7 +26,7 @@ Short notes only. GitHub releases carry the per-commit changes.
 - Shell dispatch, completion and help share one command table.
 - Syscall, verb, node-release and input key maps are table-driven.
 - One ANSI parser serves VGA, GOP and scrollback; host tests now 19.
-- Version follows git: `0.0.0-<short commit>`.
+- Version follows git: `0.0.x-<short commit>`.
 - Tag-triggered image and Windows build releases.
 
 ## 2026-11-21 — 3-strike watchdog

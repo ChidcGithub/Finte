@@ -232,6 +232,16 @@ void finte_sched_wake(fflow_t *f)
         return;
     }
     uint64_t flags = state_lock();
+    if (f->blocking) {
+        if (f->wait_chan) {
+            wait_list_remove_locked(f);
+        } else if (f->state == FINTE_FLOW_SLEEPING) {
+            sleep_list_remove_locked(f);
+        }
+        f->wake_pending = 1;
+        state_unlock(flags);
+        return;
+    }
     if (f->state == FINTE_FLOW_RUNNING || f->state == FINTE_FLOW_READY ||
         f->state == FINTE_FLOW_DEAD || f->state == FINTE_FLOW_FREE) {
         state_unlock(flags);
@@ -286,7 +296,11 @@ static int wake_sleepers(void)
         if (now >= f->wake_ns) {
             *pp = f->next_sleep;
             f->next_sleep = NULL;
-            enqueue_locked(f);
+            if (f->blocking) {
+                f->wake_pending = 1;
+            } else {
+                enqueue_locked(f);
+            }
             n++;
         } else {
             pp = &f->next_sleep;
@@ -346,7 +360,8 @@ static int any_blocked(void)
     int found = 0;
     for (uint32_t i = 0; i < FINTE_MAX_FLOWS; i++) {
         fflow_t *f = &finte_core.flows[i];
-        if (f->in_use && f->state == FINTE_FLOW_BLOCKED) {
+        if (f->in_use && f->state == FINTE_FLOW_BLOCKED &&
+            !f->wake_pending) {
             found = 1;
             break;
         }
@@ -435,6 +450,7 @@ int finte_sched_migrate(fflow_t *f, uint32_t target)
 static fflow_t *steal_one(fcpu_t *self)
 {
     uint32_t n = hal_cpu_count();
+    uint64_t sf = state_lock();
     for (uint32_t k = 1; k < n; k++) {
         fcpu_t *victim = hal_cpu_slot((self->id + k) % n);
         if (!victim || victim == self || !victim->online) {
@@ -442,6 +458,10 @@ static fflow_t *steal_one(fcpu_t *self)
         }
         uint64_t flags = runq_lock(victim);
         fflow_t *f = runq_take_locked(victim);
+        if (f && f->stats.slices == 0) {
+            runq_push_locked(victim, f);
+            f = NULL;
+        }
         if (f) {
             f->queued = 0;
             f->cpu = self->id;
@@ -449,9 +469,11 @@ static fflow_t *steal_one(fcpu_t *self)
         }
         runq_unlock(victim, flags);
         if (f) {
+            state_unlock(sf);
             return f;
         }
     }
+    state_unlock(sf);
     return NULL;
 }
 
@@ -529,6 +551,17 @@ static void run_flow(fcpu_t *cpu, fflow_t *f)
     hal_timer_stop_cpu();
     f->cycles += hal_cycles() - c0;
 
+    if (f->blocking) {
+        uint64_t sf = state_lock();
+        f->blocking = 0;
+        if (f->wake_pending) {
+            f->wake_pending = 0;
+            enqueue_locked(f);
+        } else if (f->state == FINTE_FLOW_RUNNING) {
+            f->state = FINTE_FLOW_BLOCKED;
+        }
+        state_unlock(sf);
+    }
     if (f->state < FINTE_ARRAY_SIZE(finish_ops) && finish_ops[f->state]) {
         finish_ops[f->state](f);
     }
@@ -539,7 +572,7 @@ static void sched_loop(fcpu_t *cpu, int owner)
 {
     for (;;) {
         fflow_t *f = runq_pop_cpu(cpu);
-        if (!f) {
+        if (!f && 0) {
             f = steal_one(cpu);
         }
         if (f) {
@@ -613,6 +646,7 @@ void finte_sched_ap_run(void)
 {
     fcpu_t *cpu = hal_cpu_self();
     cpu->sched_ctx = hal_ctx_self();
+    hal_irq_disable();
     for (;;) {
         sched_loop(cpu, 0);
     }

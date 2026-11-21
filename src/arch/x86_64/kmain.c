@@ -43,6 +43,7 @@ void kmain(uint64_t boot_arg, uint64_t magic)
     input_boot(bi);
     hal_init();
     faults_init();
+    usermode_prepare();
     timer_init();
     kputs("Finte " FINTE_VERSION_STRING " | x86_64 bare metal\n");
     if (bi) {

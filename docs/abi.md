@@ -1,4 +1,4 @@
-# Finte ABI v0.0.0
+# Finte ABI v0.0.1
 
 The ABI has one purpose: make authority and data movement explicit without turning every operation into a path lookup or an `ioctl` multiplexer.
 

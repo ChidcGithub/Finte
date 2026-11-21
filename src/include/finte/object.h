@@ -90,6 +90,8 @@ struct fflow {
     uint8_t wait_send;
     uint8_t started;
     uint8_t queued;
+    uint8_t blocking;
+    uint8_t wake_pending;
     uint64_t cycles;
     fflow_stats_t stats;
     flinux_state_t linux;

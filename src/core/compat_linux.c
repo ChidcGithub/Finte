@@ -667,7 +667,8 @@ static int64_t lx_uname(fflow_t *f, uint64_t nr, const uint64_t args[6])
     finte_memset(u, 0, sizeof(*u));
     finte_strlcpy(u->sysname, "Linux", sizeof(u->sysname));
     finte_strlcpy(u->nodename, "finte", sizeof(u->nodename));
-    finte_strlcpy(u->release, "0.0.0-finte", sizeof(u->release));
+    finte_strlcpy(u->release, FINTE_VERSION_STRING "-finte",
+                  sizeof(u->release));
     finte_strlcpy(u->version, "#1 Finte", sizeof(u->version));
     finte_strlcpy(u->machine, FINTE_ARCH_NAME, sizeof(u->machine));
     finte_strlcpy(u->domainname, "(none)", sizeof(u->domainname));
