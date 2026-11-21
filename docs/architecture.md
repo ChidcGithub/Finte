@@ -1,6 +1,6 @@
 # Finte architecture
 
-Finte is a system core, not a complete operating system. It owns the parts that decide **who may do what**, **what executes**, **how work is scheduled**, and **how data and authority move**. It currently ships one architecture port (x86_64), one host simulator port, one Linux personality, a RAMFS, and a demo image.
+Finte is a system core, not a complete operating system. It owns the parts that decide **who may do what**, **what executes**, **how work is scheduled**, and **how data and authority move**. It currently ships x86_64 and arm64 ports, a host simulator port, one Linux personality, a RAMFS, and bootable BIOS/UEFI media for both architectures.
 
 The design is optimized for two things:
 

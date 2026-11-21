@@ -54,6 +54,29 @@ Verified in QEMU/OVMF from a QEMU USB mass-storage device and in the Windows
 QEMU GTK GUI: 1280x800 GOP framebuffer, shell via serial and PS/2 keyboard,
 screenshots checked.
 
+## ISO and arm64 media
+
+`make images` builds four release files:
+
+| file | boot path |
+| --- | --- |
+| `finte-x86_64.img` | MBR + BIOS stage2 + FAT32 ESP with `BOOTX64.EFI` |
+| `finte-x86_64.iso` | El Torito BIOS hard-disk image + El Torito EFI FAT16 ESP |
+| `finte-arm64.img` | MBR + FAT16 ESP with `BOOTAA64.EFI` + `KERNEL.ELF` |
+| `finte-arm64.iso` | El Torito EFI FAT16 ESP |
+
+The x86_64 BIOS ISO entry uses a 288 KiB hard-disk-emulation image with an MBR
+partition whose CHS geometry fits below the EBDA; the firmware loads it at
+`0x7C00` and the normal stage-1/stage-2 path takes over. The EFI entry is a
+separate FAT16 ESP because El Torito stores the boot-image sector count in 16
+bits, which is too small for the 64 MiB FAT32 USB image.
+
+The arm64 loader (`src/uefi/loader_arm64.c`) reads `\EFI\FINTE\KERNEL.ELF`,
+allocates its physical range at `0x40080000`, copies the `PT_LOAD` segments,
+flushes the instruction cache, calls `ExitBootServices`, disables interrupts and
+branches to the ELF entry point. It requires UEFI firmware such as AAVMF; there
+is no arm64 BIOS path.
+
 ## Boot info
 
 `src/include/finte/boot.h` includes kernel/ramdisk addresses, console type, UEFI
@@ -78,6 +101,7 @@ embedded boot layout.
 
 ```bash
 make image        # build/finte.img
+make images       # x86_64 + arm64 ISO/IMG release media
 make qemu-test    # BIOS CLI test
 make qemu-uefi-test
 ```

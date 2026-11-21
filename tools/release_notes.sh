@@ -24,7 +24,10 @@ repo="${GITHUB_REPOSITORY:-ChidcGithub/Finte}"
     echo
     echo "## Artifacts"
     echo
-    echo "- \`finte.img\` — BIOS/UEFI hybrid USB image"
+    echo "- \`finte-x86_64.img\` — x86_64 BIOS/UEFI hybrid USB image"
+    echo "- \`finte-x86_64.iso\` — x86_64 BIOS/UEFI hybrid ISO"
+    echo "- \`finte-arm64.img\` — arm64 UEFI disk image"
+    echo "- \`finte-arm64.iso\` — arm64 UEFI ISO"
     echo "- \`finte.exe\` — native Windows host build"
     if [ -n "$prev" ]; then
         echo

@@ -38,6 +38,11 @@ def main() -> int:
     ap.add_argument("--ramdisk", default="")
     ap.add_argument("--efi", default="")
     ap.add_argument("--esp-size-mb", type=int, default=64)
+    ap.add_argument("--pad-to", type=int, default=0,
+                    help="pad the finished image to this many bytes")
+    ap.add_argument("--mbr-chs", default="",
+                    help="write an MBR partition with START_H,START_S,START_C,"
+                         "END_H,END_S,END_C")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -99,25 +104,47 @@ def main() -> int:
     image += header
     image += kernel_pad
     image += ramdisk_pad
-    image += b"\x00" * (ESP_LBA * 512 - len(image))
-    image += esp
+    if efi:
+        image += b"\x00" * (ESP_LBA * 512 - len(image))
+        image += esp
+
+    data = bytearray(image)
+    if args.pad_to:
+        if len(data) > args.pad_to:
+            print("image is larger than --pad-to", file=sys.stderr)
+            return 1
+        data = bytearray(bytes(data).ljust(args.pad_to, b"\x00"))
 
     # MBR partition table: one EFI System Partition covering the FAT32 image.
-    if len(image) >= 512:
-        image[446] = 0x80
-        image[447:450] = bytes([0xFE, 0xFF, 0xFF])
-        image[450] = 0xEF
-        image[451:454] = bytes([0xFE, 0xFF, 0xFF])
-        struct.pack_into("<I", image, 454, ESP_LBA)
-        struct.pack_into("<I", image, 458, esp_sectors)
-        image[510:512] = b"\x55\xAA"
+    # A BIOS-only image has no partition table unless --mbr-chs is given.
+    if efi and len(data) >= 512:
+        data[446] = 0x80
+        data[447:450] = bytes([0xFE, 0xFF, 0xFF])
+        data[450] = 0xEF
+        data[451:454] = bytes([0xFE, 0xFF, 0xFF])
+        struct.pack_into("<I", data, 454, ESP_LBA)
+        struct.pack_into("<I", data, 458, esp_sectors)
+    if args.mbr_chs and len(data) >= 512:
+        vals = [int(x, 0) for x in args.mbr_chs.split(",")]
+        if len(vals) != 6:
+            print("--mbr-chs expects six comma-separated values", file=sys.stderr)
+            return 1
+        sh, ss, sc, eh, es, ec = vals
+        data[446] = 0x80
+        data[447:450] = bytes([sh, (ss & 0x3F) | (((sc >> 8) & 0x3) << 6), sc & 0xFF])
+        data[450] = 0x83
+        data[451:454] = bytes([eh, (es & 0x3F) | (((ec >> 8) & 0x3) << 6), ec & 0xFF])
+        struct.pack_into("<I", data, 454, 0)
+        struct.pack_into("<I", data, 458, len(data) // 512)
+    if len(data) >= 512:
+        data[510:512] = b"\x55\xAA"
 
-    Path(args.out).write_bytes(image)
+    Path(args.out).write_bytes(data)
     print(f"stage2:  {len(stage2)} bytes ({STAGE2_SECTORS} sectors reserved)")
     print(f"kernel:  {len(kernel)} bytes at LBA {KERNEL_LBA}")
     print(f"ramdisk: {len(ramdisk)} bytes at LBA {ramdisk_lba}")
     print(f"ESP:     LBA {ESP_LBA}, {args.esp_size_mb} MiB FAT32")
-    print(f"image:   {len(image)} bytes -> {args.out}")
+    print(f"image:   {len(data)} bytes -> {args.out}")
     return 0
 
 

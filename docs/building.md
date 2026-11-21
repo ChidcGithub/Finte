@@ -45,10 +45,12 @@ make host           # build/finte
 make kernel         # build/kernel64.bin (flat kernel)
 make kernel-elf     # optional Multiboot fallback (build/finte.elf)
 make bootloader     # build/boot.bin + build/stage2.bin
-make uefi           # build/uefi/BOOTX64.EFI
+make uefi           # build/uefi/BOOTX64.EFI + BOOTAA64.EFI
 make user           # build/init.elf + ipc.elf (ring-3 processes, packed)
 make initrd         # build/initrd.bin
 make image          # build/finte.img (BIOS + UEFI USB image)
+make images         # x86_64 + arm64 ISO and IMG release media
+make iso            # both ISO images only
 make test           # 19 extended self-tests (host)
 make selfcheck      # startup POST/self-check suite (host)
 make demo           # host-side native pipeline
@@ -128,6 +130,24 @@ LBA 2048..   EFI System Partition (FAT32)
 - The ramdisk contains `init.elf` and `ipc.elf` (the isolated ring-3 processes)
 in addition to the text
   files packed from `src/ramdisk/`.
+
+## ISO and arm64 layout
+
+`make images` adds:
+
+```
+build/finte-x86_64.img   copy of the hybrid finte.img
+build/finte-x86_64.iso   El Torito BIOS image + EFI FAT16 ESP
+build/finte-arm64.img    MBR + FAT16 ESP with BOOTAA64.EFI + KERNEL.ELF
+build/finte-arm64.iso    El Torito EFI FAT16 ESP
+```
+
+- The x86_64 BIOS ISO entry is a 288 KiB hard-disk-emulation image with an MBR
+  CHS geometry below the EBDA. The EFI entry is a 16 MiB FAT16 ESP; El Torito's
+  16-bit sector count cannot hold the 64 MiB FAT32 USB image.
+- The arm64 loader allocates the kernel's linked range at `0x40080000`, copies
+  the ELF `PT_LOAD` segments, exits boot services and jumps to the entry point.
+  It requires UEFI firmware (QEMU `virt` + AAVMF).
 - The kernel uses its own VGA text console on BIOS and the GOP framebuffer on
   UEFI; serial is mirrored on COM1. Storage and input may call firmware services
   through the saved IDT; console output never does.

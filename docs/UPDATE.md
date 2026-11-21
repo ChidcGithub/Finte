@@ -2,9 +2,16 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-21 — ISO/IMG release media
+- `make images` builds x86_64 and arm64 `.iso` and `.img` files.
+- x86_64 images are BIOS/UEFI hybrid; arm64 images are UEFI/MBR/FAT16.
+- x86_64 ISO is BIOS + UEFI; arm64 ISO/IMG boot through AAVMF.
+- Added a minimal AArch64 UEFI loader (`BOOTAA64.EFI`).
+- Releases and nightlies now publish all four images plus `finte.exe`.
+
 ## 2026-11-21 — nightly prereleases
 - Nightly run at 22:00 Asia/Shanghai when `main` has new commits.
-- Version `Nightly-MMDD-<commit>`; published as a prerelease with image and exe.
+- Version `Nightly-MMDD-<commit>`; published as a prerelease with images and exe.
 
 ## 2026-11-21 — 0.0.1
 - Version bumped to 0.0.1.

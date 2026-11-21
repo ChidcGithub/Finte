@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) || defined(__aarch64__)
 #define EFIAPI
 #else
 #define EFIAPI __attribute__((ms_abi))
@@ -33,6 +33,22 @@ typedef struct {
     uint32_t CRC32;
     uint32_t Reserved;
 } EFI_TABLE_HEADER;
+
+typedef struct {
+    uint32_t Type;
+    uint32_t Pad;
+    EFI_PHYSICAL_ADDRESS PhysicalStart;
+    EFI_PHYSICAL_ADDRESS VirtualStart;
+    uint64_t NumberOfPages;
+    uint64_t Attribute;
+} EFI_MEMORY_DESCRIPTOR;
+
+#define EFI_CONVENTIONAL_MEMORY 7u
+#define EFI_ALLOCATE_ANY_PAGES 0u
+#define EFI_ALLOCATE_MAX_ADDRESS 1u
+#define EFI_ALLOCATE_ADDRESS 2u
+#define EFI_LOADER_CODE 1u
+#define EFI_LOADER_DATA 2u
 
 typedef struct {
     uint16_t ScanCode;
@@ -113,7 +129,10 @@ typedef struct {
     EFI_STATUS (EFIAPI *AllocatePages)(uint32_t Type, uint32_t MemoryType,
                                         UINTN Pages, EFI_PHYSICAL_ADDRESS *Memory);
     void *FreePages;
-    void *GetMemoryMap;
+    EFI_STATUS (EFIAPI *GetMemoryMap)(UINTN *MemoryMapSize,
+                                       EFI_MEMORY_DESCRIPTOR *MemoryMap,
+                                       UINTN *MapKey, UINTN *DescriptorSize,
+                                       uint32_t *DescriptorVersion);
     void *AllocatePool;
     void *FreePool;
     void *CreateEvent;
@@ -136,7 +155,8 @@ typedef struct {
     void *StartImage;
     void *Exit;
     void *UnloadImage;
-    void *ExitBootServices;
+    EFI_STATUS (EFIAPI *ExitBootServices)(EFI_HANDLE ImageHandle,
+                                           UINTN MapKey);
     void *GetNextMonotonicCount;
     void *Stall;
     EFI_STATUS (EFIAPI *SetWatchdogTimer)(UINTN Timeout, uint64_t Code,
@@ -252,9 +272,5 @@ static inline int efi_ok(EFI_STATUS s)
 }
 
 #define EFI_FILE_MODE_READ 0x0000000000000001ull
-#define EFI_ALLOCATE_MAX_ADDRESS 1u
-#define EFI_ALLOCATE_ADDRESS 2u
-#define EFI_LOADER_CODE 1u
-#define EFI_LOADER_DATA 2u
 
 #endif /* FINTE_UEFI_H */

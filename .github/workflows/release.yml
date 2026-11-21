@@ -43,6 +43,9 @@ jobs:
           name: Finte v${{ steps.version.outputs.value }}
           body_path: release-notes.md
           files: |
-            dist/finte-image/finte.img
+            dist/finte-images/finte-x86_64.img
+            dist/finte-images/finte-x86_64.iso
+            dist/finte-images/finte-arm64.img
+            dist/finte-images/finte-arm64.iso
             dist/finte-exe/finte.exe
           fail_on_unmatched_files: true

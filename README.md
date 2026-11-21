@@ -4,7 +4,7 @@
 
 **A finite, capability-first system core.** Linux-class responsibilities, a deliberately different shape.
 
-Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own BIOS bootloader** and **own UEFI loader**, runs the same core as a host simulator, and carries a Linux syscall personality on top. It is not a Linux clone: it replaces the parts of a kernel that shape how software is written.
+Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its **own BIOS bootloader** and **own UEFI loaders**, runs the same core as a host simulator, and carries a Linux syscall personality on top. It is not a Linux clone: it replaces the parts of a kernel that shape how software is written.
 
 ```
         native flows              linux64 persona
@@ -15,13 +15,13 @@ Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own 
                           |
              fuel scheduler (2 bands)
                           |
-                 HAL: host / x86_64
+                 HAL: host / x86_64 / arm64
 ```
 
 ## Status
 
 - **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 19 self-tests passing on Linux/WSL and Windows.
-- **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, and a PE32+ UEFI loader with a FAT32 ESP. One hybrid raw image contains both.
+- **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, PE32+ UEFI loaders for x86_64 and arm64, and FAT ESPs. `make images` produces x86_64 BIOS/UEFI hybrid media and arm64 UEFI ISO/IMG media.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
 - **Disk manager** with MBR/GPT partitions, ATA PIO (BIOS), AHCI and firmware Block I/O (UEFI), writable **lfc1 v2**, and read-only **NTFS**/**ext4**. An 8-entry read cache, atomic superblock-last sync, host `lfc1ck.py` validation/compaction, and capability-backed file handles.
@@ -65,6 +65,8 @@ If you are already in WSL/Linux:
 ```bash
 make all            # host simulator + build/finte.img
 make image          # hybrid BIOS + UEFI USB image
+make images         # x86_64 + arm64 ISO and IMG release media
+make iso            # both ISO images only
 make user           # build init.elf + ipc.elf (packed into the initrd)
 make test           # 19 extended core self-tests
 make selfcheck      # startup POST/self-check suite
@@ -92,14 +94,35 @@ release. To publish a stable version, tag the current commit:
 sh tools/tag_release.sh 0.0.1
 ```
 
-The release workflow publishes `finte.img` and `finte.exe` with notes generated
-since the previous stable tag.
+The release workflow publishes the x86_64 and arm64 ISO/IMG media plus
+`finte.exe`, with notes generated since the previous stable tag.
 
 A nightly workflow runs at **22:00 Asia/Shanghai**. If `main` has advanced since
 the last nightly, it publishes a prerelease named
-`Nightly-MMDD-<short commit>` with the same two artifacts. If nothing was pushed,
+`Nightly-MMDD-<short commit>` with the same artifacts. If nothing was pushed,
 the nightly is skipped. It can also be started manually with an optional force
 flag.
+
+### Release media
+
+| file | firmware / use |
+| --- | --- |
+| `build/finte-x86_64.img` | BIOS and UEFI; write to USB with Rufus in DD mode |
+| `build/finte-x86_64.iso` | BIOS and UEFI; boot from CD/DVD or attach as a CD-ROM |
+| `build/finte-arm64.img` | UEFI; MBR + FAT16 ESP, attach as a disk (QEMU `virt` + AAVMF) |
+| `build/finte-arm64.iso` | UEFI; boot as a CD-ROM (QEMU `virt` + AAVMF) |
+
+The arm64 media use a small AArch64 UEFI loader (`BOOTAA64.EFI`) that loads
+`KERNEL.ELF` at `0x40080000` and jumps to it. The same kernel is also available
+as `build/finte-arm64.elf` for `qemu-system-aarch64 -kernel`.
+
+```bash
+cp /usr/share/AAVMF/AAVMF_VARS.fd build/AAVMF_VARS.fd
+qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
+  -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd \
+  -drive if=pflash,format=raw,unit=1,file=build/AAVMF_VARS.fd \
+  -cdrom build/finte-arm64.iso
+```
 
 Native Windows host simulator (MSVC Build Tools + LLVM `clang-cl`):
 
@@ -166,7 +189,12 @@ cat /mnt/notes.txt
 | `build/finte` | Linux/WSL host simulator |
 | `build/finte.exe` | native Windows host simulator (after `build-win.bat`) |
 | `build/finte.img` | **hybrid BIOS + UEFI USB image** — write this with Rufus |
-| `build/uefi/BOOTX64.EFI` | custom UEFI loader |
+| `build/finte-x86_64.img` | architecture-labelled copy of `finte.img` |
+| `build/finte-x86_64.iso` | x86_64 BIOS/UEFI hybrid ISO |
+| `build/finte-arm64.img` | arm64 UEFI disk image (MBR + FAT16 ESP) |
+| `build/finte-arm64.iso` | arm64 UEFI ISO |
+| `build/uefi/BOOTX64.EFI` | custom x86_64 UEFI loader |
+| `build/uefi/BOOTAA64.EFI` | custom arm64 UEFI loader |
 | `build/kernel64.bin` | flat 64-bit kernel (loaded at 64 MiB) |
 | `build/finte.elf` | optional Multiboot fallback (`make kernel-elf`) |
 
@@ -174,8 +202,9 @@ cat /mnt/notes.txt
 
 Use **Rufus** on Windows:
 
-1. Build `build/finte.img` with `.\build.ps1 -Target image`.
-2. In Rufus, select the USB device and `build/finte.img`.
+1. Build `build/finte-x86_64.img` with `.\build.ps1 -Target image` (or
+   `make images`).
+2. In Rufus, select the USB device and `build/finte-x86_64.img`.
 3. When Rufus asks between **ISO Image mode** and **DD Image mode**, choose
    **DD Image mode**. The image already contains its own MBR, EFI System
    Partition and FAT32 filesystem; ISO mode would re-partition and destroy it.
@@ -417,8 +446,9 @@ The performance argument is structural: handles are direct indexes, capability c
 
 **Works now**
 
-- Own BIOS boot sector/stage2 (CHS) and own UEFI PE32+ loader.
-- Hybrid raw USB image with MBR, FAT32 ESP, BIOS payload and UEFI payload.
+- Own BIOS boot sector/stage2 (CHS) and own x86_64/arm64 UEFI PE loaders.
+- Hybrid x86_64 raw USB image with MBR, FAT32 ESP, BIOS payload and UEFI payload.
+- x86_64 and arm64 ISO/IMG release media; arm64 boots through AAVMF.
 - VGA text console, GOP framebuffer console, PS/2 + serial + UEFI ConIn input.
 - CLI shell with ramdisk access, writable lfc1 filesystems, line editing,
   history, completion and diagnostic commands.

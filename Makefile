@@ -28,6 +28,8 @@ KCFLAGS := -m64 -std=c11 -O2 -g -ffreestanding -fno-builtin -fno-pic -fno-pie \
            -mgeneral-regs-only -Wall -Wextra -Isrc/include -I$(BUILD)
 UEFI_CFLAGS := -target x86_64-pc-windows-msvc -c -ffreestanding \
                -fno-stack-protector -Isrc/include
+UEFI_ARM64_CFLAGS := -target aarch64-pc-windows-msvc -c -ffreestanding \
+                     -fno-stack-protector -Isrc/include
 USER_CFLAGS := -m64 -std=c11 -O2 -ffreestanding -fno-builtin -fno-pic \
                -fno-pie -fno-stack-protector -mno-red-zone -mno-sse -mno-sse2 \
                -mcmodel=large -Wall -Wextra
@@ -65,7 +67,7 @@ ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
 .PHONY: all host kernel kernel-elf image uefi bootloader initrd test selfcheck \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
         disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
-        arm64 arm64-test qemu-arm64
+        arm64 arm64-test qemu-arm64 images iso
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
@@ -112,7 +114,12 @@ kernel-elf: $(BUILD)/finte.elf
 
 image: $(BUILD)/finte.img
 
-uefi: $(BUILD)/uefi/BOOTX64.EFI
+images: $(BUILD)/finte-x86_64.img $(BUILD)/finte-x86_64.iso \
+        $(BUILD)/finte-arm64.img $(BUILD)/finte-arm64.iso
+
+iso: $(BUILD)/finte-x86_64.iso $(BUILD)/finte-arm64.iso
+
+uefi: $(BUILD)/uefi/BOOTX64.EFI $(BUILD)/uefi/BOOTAA64.EFI
 
 bootloader: $(BUILD)/boot.bin $(BUILD)/stage2.bin
 
@@ -196,6 +203,57 @@ $(BUILD)/finte.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin $(BUILD)/kernel64.bin 
 	$(PYTHON) tools/mkimage.py --boot $(BUILD)/boot.bin \
 	  --stage2 $(BUILD)/stage2.bin --kernel $(BUILD)/kernel64.bin \
 	  --ramdisk $(BUILD)/initrd.bin --efi $(BUILD)/uefi/BOOTX64.EFI \
+	  --out $@
+
+# A BIOS-only El Torito hard-disk image. It contains the same stage-1,
+# stage-2, kernel and ramdisk as finte.img, with a small MBR partition whose
+# CHS geometry fits below the EBDA.
+$(BUILD)/finte-bios.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin \
+                         $(BUILD)/kernel64.bin $(BUILD)/initrd.bin \
+                         tools/mkimage.py
+	$(PYTHON) tools/mkimage.py --boot $(BUILD)/boot.bin \
+	  --stage2 $(BUILD)/stage2.bin --kernel $(BUILD)/kernel64.bin \
+	  --ramdisk $(BUILD)/initrd.bin --esp-size-mb 0 --pad-to 294912 \
+	  --mbr-chs 0,1,0,1,18,15 --out $@
+
+# FAT16 ESPs used inside ISO images. FAT16 keeps the El Torito image below
+# the 16-bit sector-count limit.
+$(BUILD)/esp-x86.iso.img: $(BUILD)/uefi/BOOTX64.EFI $(BUILD)/kernel64.bin \
+                          $(BUILD)/initrd.bin tools/mkesp.py
+	$(PYTHON) tools/mkesp.py --out $@ --size-mb 16 \
+	  --add EFI/BOOT/BOOTX64.EFI=$(BUILD)/uefi/BOOTX64.EFI \
+	  --add EFI/FINTE/KERNEL.BIN=$(BUILD)/kernel64.bin \
+	  --add EFI/FINTE/RAMDISK.BIN=$(BUILD)/initrd.bin
+
+$(BUILD)/uefi/loader_arm64.obj: src/uefi/loader_arm64.c $(HEADERS)
+	@mkdir -p $(dir $@)
+	$(CLANG) $(UEFI_ARM64_CFLAGS) $< -o $@
+
+$(BUILD)/uefi/BOOTAA64.EFI: $(BUILD)/uefi/loader_arm64.obj
+	$(LLD_LINK) /nologo /subsystem:efi_application /entry:efi_main \
+	  /nodefaultlib /machine:arm64 /out:$@ $^
+
+$(BUILD)/esp-arm64.img: $(BUILD)/uefi/BOOTAA64.EFI $(BUILD)/finte-arm64.elf \
+                        tools/mkesp.py
+	$(PYTHON) tools/mkesp.py --out $@ --size-mb 16 \
+	  --add EFI/BOOT/BOOTAA64.EFI=$(BUILD)/uefi/BOOTAA64.EFI \
+	  --add EFI/FINTE/KERNEL.ELF=$(BUILD)/finte-arm64.elf
+
+# Architecture-labelled disk images. x86_64 keeps the hybrid BIOS/UEFI image;
+# arm64 wraps the FAT16 ESP used by the ISO in an MBR.
+$(BUILD)/finte-x86_64.img: $(BUILD)/finte.img
+	cp $< $@
+
+$(BUILD)/finte-arm64.img: $(BUILD)/esp-arm64.img tools/mkdiskimg.py
+	$(PYTHON) tools/mkdiskimg.py --esp $(BUILD)/esp-arm64.img --out $@
+
+$(BUILD)/finte-x86_64.iso: $(BUILD)/finte-bios.img $(BUILD)/esp-x86.iso.img \
+                           tools/mkiso.py
+	$(PYTHON) tools/mkiso.py --arch x86_64 --bios $(BUILD)/finte-bios.img \
+	  --efi $(BUILD)/esp-x86.iso.img --out $@
+
+$(BUILD)/finte-arm64.iso: $(BUILD)/esp-arm64.img tools/mkiso.py
+	$(PYTHON) tools/mkiso.py --arch arm64 --efi $(BUILD)/esp-arm64.img \
 	  --out $@
 
 test: host
