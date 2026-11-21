@@ -119,6 +119,11 @@ fret_t finte_syscall(fflow_t *flow, uint32_t verb, const uint64_t args[6]);
 
 A grant may not add rights the source cap does not have. `CAP_DUP` follows the same rule.
 
+Arena caps may be **page-scoped**: the core installs one with a page-aligned
+`offset` and `length`, and `CAP_INFO` reports `FINTE_CAP_SCOPED` plus the
+window. Scoped `ARENA_ALLOC` stays inside that window; a whole-arena cap
+cannot allocate or free inside it.
+
 ## Structures
 
 ```c
