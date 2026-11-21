@@ -1,0 +1,135 @@
+/* Platform boundary.
+ *
+ * The core never touches hardware directly. Host runs use ucontext/fibers;
+ * the x86_64 kernel uses a small assembly context switch and COM1.
+ */
+#ifndef FINTE_HAL_H
+#define FINTE_HAL_H
+
+#include "finte/base.h"
+#include "finte/boot.h"
+
+typedef struct fhal_ctx fhal_ctx_t;
+
+#define FINTE_MAX_CPUS 8
+
+/* Per-CPU scheduling and interrupt state. `self` is first so %gs can point
+ * directly at the structure. */
+typedef struct fcpu {
+    struct fcpu *self;
+    struct fflow *current;
+    struct fhal_ctx *sched_ctx;
+    uint32_t id;
+    uint32_t apic_id;
+    volatile uint32_t online;
+    volatile uint32_t timer_kind; /* 0 = PIT (BSP), 1 = TSC, 2 = periodic */
+    volatile uint32_t need_resched;
+    volatile uint32_t idle;
+    uint32_t core_depth;
+    uint32_t lapic_period;
+    uint64_t lock_flags;
+    uint64_t ticks;
+    uint64_t switches;
+    uint64_t ipis;
+    struct fflow *runq[2];
+    struct fflow *runq_tail[2];
+} fcpu_t;
+
+struct fhal_ctx {
+    void (*entry)(void *arg);
+    void *arg;
+    void *impl;          /* platform-specific handle */
+    void *stack;
+    size_t stack_size;
+    uint64_t cr3;        /* address space to load, 0 = keep current */
+    uint64_t rsp;        /* kernel context switch */
+};
+
+void hal_init(void);
+void hal_boot_info(const fboot_info_t *bi);
+void hal_console_write(const char *buf, size_t len);
+void hal_console_write_raw(const char *buf, size_t len);
+void hal_console_clear(void);
+void hal_console_clear_line(void);
+int hal_console_trykey(void);
+int hal_console_cols(void);
+int hal_console_rows(void);
+int hal_console_scroll(int delta);
+int hal_console_scroll_top(void);
+int hal_console_scroll_bottom(void);
+int hal_console_scroll_offset(void);
+int hal_console_trywheel(void);
+void hal_heap_info(uint64_t *used, uint64_t *total);
+uint64_t hal_cycles(void);
+uint64_t hal_cycles_per_sec(void);
+uint64_t hal_now_ns(void);
+void hal_idle(uint64_t ns);
+void hal_exit(int code) __attribute__((noreturn));
+void hal_panic(const char *msg) __attribute__((noreturn));
+int hal_is_uefi(void);
+
+/* Three-strike system watchdog. */
+void hal_watchdog_strike(const char *reason);
+void hal_watchdog_suspend(void);
+void hal_watchdog_resume(void);
+int hal_watchdog_strikes(void);
+const char *hal_watchdog_last(void);
+void hal_watchdog_clear(void);
+
+/* CPU-local state and SMP primitives. */
+fcpu_t *hal_cpu_self(void);
+fcpu_t *hal_cpu_slot(uint32_t index);
+uint32_t hal_cpu_count(void);
+void hal_cpu_install(fcpu_t *cpu);
+void hal_cpu_mark_online(uint32_t index);
+void hal_spin_lock(volatile int *lock);
+void hal_spin_unlock(volatile int *lock);
+void hal_cpu_wake(uint32_t index);
+void hal_cpu_wake_all(void);
+void hal_cpu_idle(void);
+void hal_timer_start_cpu(void);
+void hal_timer_stop_cpu(void);
+
+/* Raw block devices. The disk manager works only through this interface.
+ * hal_blk_add_image() is a host/test hook; the kernel returns -1. */
+#define FBLK_NAME_MAX 16
+#define FBLK_MAX 8
+#define FBLK_FLAG_REMOVABLE 1u
+
+typedef struct fblk_info {
+    char name[FBLK_NAME_MAX];
+    uint64_t sectors;
+    uint32_t sector_size;
+    uint32_t flags;
+} fblk_info_t;
+
+int hal_blk_count(void);
+int hal_blk_info(int index, fblk_info_t *out);
+int hal_blk_read(int index, uint64_t lba, void *buf, uint32_t sectors);
+int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors);
+int hal_blk_add_image(const char *path);
+
+/* Temporarily switch to the firmware IDT for UEFI Boot Services calls. */
+int hal_fw_begin(void);
+void hal_fw_end(void);
+
+/* Interrupt-state control for the scheduler copy of IF. */
+void hal_irq_disable(void);
+void hal_irq_enable(void);
+uint64_t hal_irq_save(void);
+void hal_irq_restore(uint64_t flags);
+
+/* Page-granular allocation used for arenas and stacks. */
+void *hal_pages_alloc(size_t bytes);
+void hal_pages_free(void *ptr, size_t bytes);
+
+fhal_ctx_t *hal_ctx_self(void);
+fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes);
+void hal_ctx_destroy(fhal_ctx_t *ctx);
+void hal_ctx_switch(fhal_ctx_t *from, fhal_ctx_t *to);
+void hal_user_bind_stack(void *top);
+
+/* Called by the tiny platform trampoline with the active context installed. */
+void finte_hal_bootstrap(void);
+
+#endif /* FINTE_HAL_H */

@@ -1,0 +1,4 @@
+Welcome to Finte.
+
+Finte is a capability-first system core with finite flows.
+Try: help uname ls cat demo compat selfcheck boot

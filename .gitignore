@@ -1,0 +1,10 @@
+build/
+*.o
+*.elf
+*.bin
+*.log
+*.exe
+*.obj
+__pycache__/
+*.pyc
+AGENTS.md

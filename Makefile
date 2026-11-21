@@ -1,0 +1,209 @@
+# Finte build.
+#   make all        host simulator + bootable x86_64 kernel
+#   make test       core self-tests
+#   make bench      microbenchmarks
+#   make qemu       boot the kernel in QEMU (serial on stdio)
+#   make qemu-test  boot the kernel and verify the log
+
+CC       ?= gcc
+LD       ?= ld
+OBJCOPY  ?= objcopy
+QEMU     ?= qemu-system-x86_64
+SMP      ?= 4
+ACCEL    ?= $(shell if [ -w /dev/kvm ]; then echo "-accel kvm"; else echo "-accel tcg"; fi)
+CLANG    ?= clang
+LLD_LINK ?= lld-link
+PYTHON   ?= python3
+BUILD    ?= build
+
+HOST_CFLAGS ?= -std=c11 -O2 -g -Wall -Wextra -Isrc/include
+KCFLAGS := -m64 -std=c11 -O2 -g -ffreestanding -fno-builtin -fno-pic -fno-pie \
+           -fno-stack-protector -mno-red-zone -mno-sse -mno-sse2 \
+           -mgeneral-regs-only -Wall -Wextra -Isrc/include
+UEFI_CFLAGS := -target x86_64-pc-windows-msvc -c -ffreestanding \
+               -fno-stack-protector -Isrc/include
+USER_CFLAGS := -m64 -std=c11 -O2 -ffreestanding -fno-builtin -fno-pic \
+               -fno-pie -fno-stack-protector -mno-red-zone -mno-sse -mno-sse2 \
+               -mcmodel=large -Wall -Wextra
+
+HEADERS := $(wildcard src/include/finte/*.h)
+CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c src/core/channel.c \
+            src/core/flow.c src/core/sched.c src/core/verb.c src/core/compat_linux.c \
+            src/core/demo.c src/core/guest_linux.c src/core/selftest.c src/core/initrd.c \
+            src/core/disk.c src/core/lfc1.c src/core/ext4.c src/core/ntfs.c src/core/file.c \
+            src/core/lock.c src/core/cas.c src/core/ansi.c
+HOST_SRC := $(CORE_SRC) src/host/hal_host.c src/host/blk_host.c src/host/main.c src/host/bench.c src/tests/test_main.c
+
+KERNEL_SRC := $(CORE_SRC) src/arch/x86_64/kmain.c src/arch/x86_64/hal_x86.c \
+              src/arch/x86_64/faults.c src/arch/x86_64/post.c src/arch/x86_64/libc.c \
+              src/arch/x86_64/vga.c src/arch/x86_64/fb.c \
+              src/arch/x86_64/input.c src/arch/x86_64/scroll.c \
+              src/arch/x86_64/blk.c src/arch/x86_64/timer.c src/arch/x86_64/usermode.c \
+              src/arch/x86_64/process.c src/arch/x86_64/watchdog.c \
+              src/arch/x86_64/smp.c src/arch/x86_64/shell.c $(BUILD)/ap_trampoline_bin.c
+KERNEL_ASM := src/arch/x86_64/context.S src/arch/x86_64/faults.S src/arch/x86_64/entry64.S \
+              src/arch/x86_64/usermode.S src/arch/x86_64/timer.S
+KERNEL_OBJ := $(patsubst %.c,$(BUILD)/kobj/%.o,$(KERNEL_SRC)) \
+              $(patsubst %.S,$(BUILD)/kobj/asm/%.o,$(KERNEL_ASM))
+
+.PHONY: all host kernel kernel-elf image uefi bootloader initrd test selfcheck \
+        bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
+        disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean
+
+all: host image
+
+host: $(BUILD)/finte
+
+kernel: $(BUILD)/kernel64.bin
+
+kernel-elf: $(BUILD)/finte.elf
+
+image: $(BUILD)/finte.img
+
+uefi: $(BUILD)/uefi/BOOTX64.EFI
+
+bootloader: $(BUILD)/boot.bin $(BUILD)/stage2.bin
+
+initrd: $(BUILD)/initrd.bin
+
+user: $(BUILD)/init.elf $(BUILD)/ipc.elf
+
+$(BUILD)/finte: $(HOST_SRC) $(HEADERS)
+	@mkdir -p $(BUILD)
+	$(CC) $(HOST_CFLAGS) $(HOST_SRC) -o $@
+
+$(BUILD)/kobj/%.o: %.c $(HEADERS) src/arch/x86_64/process.h
+	@mkdir -p $(dir $@)
+	$(CC) $(KCFLAGS) -c $< -o $@
+
+$(BUILD)/kobj/asm/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) -m64 -c $< -o $@
+
+$(BUILD)/kernel64.elf: $(KERNEL_OBJ) src/arch/x86_64/kernel64.ld
+	$(LD) -m elf_x86_64 -T src/arch/x86_64/kernel64.ld -o $@ $(KERNEL_OBJ)
+
+$(BUILD)/kernel64.bin: $(BUILD)/kernel64.elf
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/ap_trampoline.bin: src/arch/x86_64/ap_trampoline.S src/arch/x86_64/ap_trampoline.ld
+	@mkdir -p $(BUILD)
+	$(CC) -m64 -c src/arch/x86_64/ap_trampoline.S -o $(BUILD)/ap_trampoline.o
+	$(LD) -m elf_x86_64 -T src/arch/x86_64/ap_trampoline.ld \
+	  -o $(BUILD)/ap_trampoline.elf $(BUILD)/ap_trampoline.o
+	$(OBJCOPY) -O binary $(BUILD)/ap_trampoline.elf $@
+
+$(BUILD)/ap_trampoline_bin.c: $(BUILD)/ap_trampoline.bin tools/mkbinarray.py
+	$(PYTHON) tools/mkbinarray.py $< $@ ap_trampoline_bin
+
+$(BUILD)/boot32.o: src/arch/x86_64/boot32.S $(BUILD)/kernel64.bin
+	$(CC) -m32 -c $< -o $@
+
+$(BUILD)/finte.elf: $(BUILD)/boot32.o src/arch/x86_64/boot32.ld $(BUILD)/kernel64.bin
+	$(LD) -m elf_i386 -T src/arch/x86_64/boot32.ld -o $@ $(BUILD)/boot32.o
+
+$(BUILD)/boot.bin: src/boot/boot.S src/boot/boot.ld
+	$(CC) -m32 -c $< -o $(BUILD)/boot.o
+	$(LD) -m elf_i386 -T src/boot/boot.ld -o $@ $(BUILD)/boot.o
+
+$(BUILD)/stage2.bin: src/boot/stage2.S src/boot/stage2.ld
+	$(CC) -m32 -c $< -o $(BUILD)/stage2.o
+	$(LD) -m elf_i386 -T src/boot/stage2.ld -o $@ $(BUILD)/stage2.o
+
+$(BUILD)/uefi/loader.obj: src/uefi/loader.c $(HEADERS)
+	@mkdir -p $(dir $@)
+	$(CLANG) $(UEFI_CFLAGS) $< -o $@
+
+$(BUILD)/uefi/jump.obj: src/uefi/jump.S
+	@mkdir -p $(dir $@)
+	$(CLANG) -target x86_64-pc-windows-msvc -c $< -o $@
+
+$(BUILD)/uefi/BOOTX64.EFI: $(BUILD)/uefi/loader.obj $(BUILD)/uefi/jump.obj
+	$(LLD_LINK) /nologo /subsystem:efi_application /entry:efi_main \
+	  /nodefaultlib /out:$@ $^
+
+$(BUILD)/initrd.bin: $(wildcard src/ramdisk/*) $(BUILD)/init.elf $(BUILD)/ipc.elf tools/mkinitrd.py
+	@mkdir -p $(BUILD)
+	$(PYTHON) tools/mkinitrd.py --dir src/ramdisk --out $@ \
+	  --extra init.elf=$(BUILD)/init.elf \
+	  --extra ipc.elf=$(BUILD)/ipc.elf
+
+$(BUILD)/init.elf: src/user/init.c src/user/user.ld
+	@mkdir -p $(BUILD)
+	$(CC) $(USER_CFLAGS) -c src/user/init.c -o $(BUILD)/init.o
+	$(LD) -m elf_x86_64 -T src/user/user.ld -o $@ $(BUILD)/init.o
+
+$(BUILD)/ipc.elf: src/user/ipc.c src/user/ipc.ld
+	@mkdir -p $(BUILD)
+	$(CC) $(USER_CFLAGS) -c src/user/ipc.c -o $(BUILD)/ipc.o
+	$(LD) -m elf_x86_64 -T src/user/ipc.ld -o $@ $(BUILD)/ipc.o
+
+$(BUILD)/finte.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin $(BUILD)/kernel64.bin \
+                    $(BUILD)/initrd.bin $(BUILD)/uefi/BOOTX64.EFI \
+                    tools/mkimage.py tools/mkfat32.py
+	$(PYTHON) tools/mkimage.py --boot $(BUILD)/boot.bin \
+	  --stage2 $(BUILD)/stage2.bin --kernel $(BUILD)/kernel64.bin \
+	  --ramdisk $(BUILD)/initrd.bin --efi $(BUILD)/uefi/BOOTX64.EFI \
+	  --out $@
+
+test: host
+	./$(BUILD)/finte test
+
+selfcheck: host
+	./$(BUILD)/finte selfcheck
+
+bench: host
+	./$(BUILD)/finte bench
+
+demo: host
+	./$(BUILD)/finte demo
+
+compat: host
+	./$(BUILD)/finte compat
+
+qemu: image
+	-$(QEMU) -m 256M -smp $(SMP) $(ACCEL) -drive format=raw,file=$(BUILD)/finte.img,if=ide,index=0,media=disk \
+	  -boot c -display none -serial stdio -monitor none -no-reboot \
+	  -device isa-debug-exit,iobase=0xf4,iosize=0x04
+
+OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
+OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
+
+$(BUILD)/OVMF_VARS.fd: $(OVMF_VARS)
+	cp $< $@
+
+qemu-uefi: image $(BUILD)/OVMF_VARS.fd
+	-$(QEMU) -m 256M -smp $(SMP) $(ACCEL) -machine q35 \
+	  -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+	  -drive if=pflash,format=raw,file=$(BUILD)/OVMF_VARS.fd \
+	  -drive format=raw,file=$(BUILD)/finte.img,if=ide,index=0,media=disk \
+	  -boot c -display none -serial stdio -monitor none -no-reboot \
+	  -device isa-debug-exit,iobase=0xf4,iosize=0x04
+
+qemu-uefi-test: image $(BUILD)/OVMF_VARS.fd
+	bash tools/qemu_uefi_test.sh
+
+qemu-kernel: kernel-elf
+	-$(QEMU) -m 256M -kernel $(BUILD)/finte.elf -display none \
+	  -serial stdio -monitor none -no-reboot \
+	  -device isa-debug-exit,iobase=0xf4,iosize=0x04
+
+qemu-test: image
+	bash tools/qemu_test.sh
+
+$(BUILD)/disk-test.img: tools/mkdisk_test.py tools/mklfc1.py
+	$(PYTHON) tools/mkdisk_test.py --out $@
+
+disk-image: $(BUILD)/disk-test.img
+
+disk-test: host $(BUILD)/disk-test.img
+	bash tools/disk_test.sh
+
+qemu-disk-test: image $(BUILD)/disk-test.img
+	bash tools/qemu_disk_test.sh bios
+
+qemu-uefi-disk-test: image $(BUILD)/disk-test.img $(BUILD)/OVMF_VARS.fd
+	bash tools/qemu_disk_test.sh uefi
+
+clean:
+	rm -rf $(BUILD)
