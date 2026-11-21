@@ -747,6 +747,12 @@ int finte_proc_demo(void)
     if (!p1 || !p2 || !p3 || !p4) {
         goto out;
     }
+    /* Move one ready-to-start service to a different CPU to exercise the
+     * explicit migration path before the batch starts. */
+    if (hal_cpu_count() > 1 && p4->flow) {
+        uint32_t target = (p4->flow->cpu + 1u) % hal_cpu_count();
+        (void)finte_sched_migrate(p4->flow, target);
+    }
     /* PID 1 probes supervisor memory on purpose: contained and expected. */
     p1->expected_fault = 1;
 
