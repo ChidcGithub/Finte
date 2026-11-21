@@ -667,6 +667,31 @@ static void test_ansi(void)
     CHECK(p.style.fg == 15);
 }
 
+static void test_status_text(void)
+{
+    CHECK(finte_strcmp(finte_strstatus(FINTE_OK), "ok") == 0);
+    CHECK(finte_strcmp(finte_strstatus(FINTE_ERR_NOENT), "no-entry") == 0);
+    CHECK(finte_strcmp(finte_strstatus(FINTE_ERR_EOF), "end-of-stream") == 0);
+    CHECK(finte_strcmp(finte_strstatus(-99), "unknown") == 0);
+    CHECK(finte_strcmp(finte_disk_error(0), "ok") == 0);
+    CHECK(finte_strcmp(finte_disk_error(FINTE_ERR_NOENT), "not found") == 0);
+    CHECK(finte_strcmp(finte_disk_error(FINTE_ERR_EOF), "end of file") == 0);
+    CHECK(finte_strcmp(finte_disk_error(-99), "disk error") == 0);
+}
+
+static void test_format(void)
+{
+    char buf[128];
+    int n = finte_format(buf, sizeof(buf),
+                         "%s %c %d %u %x %X %08x %lld %p %%",
+                         "ok", 'A', -12, 42u, 0xBEEFu, 0xBEEFu,
+                         0xBEEFu, -1234567890123ll, (void *)0x1234);
+    CHECK(n == (int)finte_strlen(buf));
+    CHECK(finte_strcmp(
+              buf,
+              "ok A -12 42 beef BEEF 0000beef -1234567890123 0x1234 %") == 0);
+}
+
 struct testcase {
     const char *name;
     void (*fn)(void);
@@ -690,6 +715,8 @@ static const struct testcase g_tests[] = {
     { "no ambient authority", test_no_ambient_authority },
     { "native demo", test_demo },
     { "ANSI SGR parser", test_ansi },
+    { "status text", test_status_text },
+    { "formatter", test_format },
 };
 
 int finte_tests_run(void)

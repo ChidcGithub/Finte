@@ -28,6 +28,65 @@ static int serial_esc;
 static int serial_num;
 static int serial_mod;
 
+typedef struct key_map {
+    int code;
+    int key;
+} key_map_t;
+
+static int key_lookup(const key_map_t *map, size_t count, int code)
+{
+    for (size_t i = 0; i < count; i++) {
+        if (map[i].code == code) {
+            return map[i].key;
+        }
+    }
+    return -1;
+}
+
+static const key_map_t efi_scan_keys[] = {
+    { 0x01, KEY_UP },
+    { 0x02, KEY_DOWN },
+    { 0x03, KEY_RIGHT },
+    { 0x04, KEY_LEFT },
+    { 0x05, KEY_HOME },
+    { 0x06, KEY_END },
+    { 0x08, KEY_DELETE },
+    { 0x09, KEY_PGUP },
+    { 0x0A, KEY_PGDN },
+};
+
+static const key_map_t serial_keys[] = {
+    { 'A', KEY_UP },
+    { 'B', KEY_DOWN },
+    { 'C', KEY_RIGHT },
+    { 'D', KEY_LEFT },
+    { 'H', KEY_HOME },
+    { 'F', KEY_END },
+};
+
+static const key_map_t serial_tilde_keys[] = {
+    { 1, KEY_HOME },
+    { 3, KEY_DELETE },
+    { 4, KEY_END },
+    { 5, KEY_PGUP },
+    { 6, KEY_PGDN },
+    { 7, KEY_HOME },
+    { 8, KEY_END },
+};
+
+static const key_map_t ps2_e0_keys[] = {
+    { 0x1C, '\n' },
+    { 0x47, KEY_HOME },
+    { 0x48, KEY_UP },
+    { 0x49, KEY_PGUP },
+    { 0x4B, KEY_LEFT },
+    { 0x4D, KEY_RIGHT },
+    { 0x4F, KEY_END },
+    { 0x50, KEY_DOWN },
+    { 0x51, KEY_PGDN },
+    { 0x53, KEY_DELETE },
+};
+
 static int mouse_ok;
 static int mouse_wheel_mode;
 static int mouse_cycle;
@@ -231,17 +290,11 @@ static int uefi_trykey(void)
     if (st != 0) {
         return -1;
     }
-    switch (key.ScanCode) {
-    case 0x01: return KEY_UP;
-    case 0x02: return KEY_DOWN;
-    case 0x03: return KEY_RIGHT;
-    case 0x04: return KEY_LEFT;
-    case 0x05: return KEY_HOME;
-    case 0x06: return KEY_END;
-    case 0x08: return KEY_DELETE;
-    case 0x09: return KEY_PGUP;
-    case 0x0A: return KEY_PGDN;
-    default: break;
+    int mapped = key_lookup(efi_scan_keys,
+                            FINTE_ARRAY_SIZE(efi_scan_keys),
+                            key.ScanCode);
+    if (mapped >= 0) {
+        return mapped;
     }
     if (key.UnicodeChar == 0) {
         return -1;
@@ -299,15 +352,7 @@ static int serial_trykey(void)
             return -1;
         }
         serial_esc = 0;
-        switch (c) {
-        case 'A': return KEY_UP;
-        case 'B': return KEY_DOWN;
-        case 'C': return KEY_RIGHT;
-        case 'D': return KEY_LEFT;
-        case 'H': return KEY_HOME;
-        case 'F': return KEY_END;
-        default: return -1;
-        }
+        return key_lookup(serial_keys, FINTE_ARRAY_SIZE(serial_keys), c);
     }
     if (serial_esc == 3) {
         if (c == ';') {
@@ -317,21 +362,9 @@ static int serial_trykey(void)
         }
         serial_esc = 0;
         if (c == '~') {
-            if (serial_num == 3) {
-                return KEY_DELETE;
-            }
-            if (serial_num == 1 || serial_num == 7) {
-                return KEY_HOME;
-            }
-            if (serial_num == 4 || serial_num == 8) {
-                return KEY_END;
-            }
-            if (serial_num == 5) {
-                return KEY_PGUP;
-            }
-            if (serial_num == 6) {
-                return KEY_PGDN;
-            }
+            return key_lookup(serial_tilde_keys,
+                              FINTE_ARRAY_SIZE(serial_tilde_keys),
+                              serial_num);
         }
         return -1;
     }
@@ -342,15 +375,15 @@ static int serial_trykey(void)
         }
         serial_esc = 0;
         int shifted = (serial_mod & 2) != 0;
-        switch (c) {
-        case 'A': return shifted ? KEY_SHIFT_UP : KEY_UP;
-        case 'B': return shifted ? KEY_SHIFT_DOWN : KEY_DOWN;
-        case 'C': return KEY_RIGHT;
-        case 'D': return KEY_LEFT;
-        case 'H': return KEY_HOME;
-        case 'F': return KEY_END;
-        default: return -1;
+        int mapped = key_lookup(serial_keys,
+                                FINTE_ARRAY_SIZE(serial_keys), c);
+        if (shifted && mapped == KEY_UP) {
+            return KEY_SHIFT_UP;
         }
+        if (shifted && mapped == KEY_DOWN) {
+            return KEY_SHIFT_DOWN;
+        }
+        return mapped;
     }
     return -1;
 }
@@ -377,19 +410,15 @@ static int ps2_trykey(void)
         if (sc & 0x80) {
             return -1;
         }
-        switch (sc) {
-        case 0x48: return shift_down ? KEY_SHIFT_UP : KEY_UP;
-        case 0x50: return shift_down ? KEY_SHIFT_DOWN : KEY_DOWN;
-        case 0x4B: return KEY_LEFT;
-        case 0x4D: return KEY_RIGHT;
-        case 0x47: return KEY_HOME;
-        case 0x4F: return KEY_END;
-        case 0x53: return KEY_DELETE;
-        case 0x49: return KEY_PGUP;
-        case 0x51: return KEY_PGDN;
-        case 0x1C: return '\n';
-        default: return -1;
+        int mapped = key_lookup(ps2_e0_keys,
+                                FINTE_ARRAY_SIZE(ps2_e0_keys), sc);
+        if (mapped == KEY_UP && shift_down) {
+            return KEY_SHIFT_UP;
         }
+        if (mapped == KEY_DOWN && shift_down) {
+            return KEY_SHIFT_DOWN;
+        }
+        return mapped;
     }
     if (sc == 0x2A || sc == 0x36) {
         shift_down = 1;

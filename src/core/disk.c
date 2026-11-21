@@ -103,25 +103,33 @@ static void part_clear(fdisk_part_t *p)
 
 static void part_name_mbr(uint8_t type, char *out, size_t cap)
 {
+    static const struct {
+        uint8_t type;
+        const char *name;
+    } names[] = {
+        { 0x01, "fat12" },
+        { 0x04, "fat16" },
+        { 0x05, "extended" },
+        { 0x06, "fat16b" },
+        { 0x07, "ntfs/exfat" },
+        { 0x0B, "fat32" },
+        { 0x0C, "fat32 lba" },
+        { 0x0E, "fat16 lba" },
+        { 0x0F, "extended" },
+        { 0x4C, "lfc1" },
+        { 0x82, "linux swap" },
+        { 0x83, "linux" },
+        { 0x85, "linux ext" },
+        { 0x8E, "linux lvm" },
+        { 0xEE, "gpt protective" },
+        { 0xEF, "efi system" },
+    };
     const char *name = "unknown";
-    switch (type) {
-    case 0x01: name = "fat12"; break;
-    case 0x04: name = "fat16"; break;
-    case 0x06: name = "fat16b"; break;
-    case 0x07: name = "ntfs/exfat"; break;
-    case 0x0B: name = "fat32"; break;
-    case 0x0C: name = "fat32 lba"; break;
-    case 0x0E: name = "fat16 lba"; break;
-    case 0x0F: name = "extended"; break;
-    case 0x05: name = "extended"; break;
-    case 0x82: name = "linux swap"; break;
-    case 0x83: name = "linux"; break;
-    case 0x85: name = "linux ext"; break;
-    case 0x8E: name = "linux lvm"; break;
-    case 0x4C: name = "lfc1"; break;
-    case 0xEE: name = "gpt protective"; break;
-    case 0xEF: name = "efi system"; break;
-    default: break;
+    for (size_t i = 0; i < FINTE_ARRAY_SIZE(names); i++) {
+        if (names[i].type == type) {
+            name = names[i].name;
+            break;
+        }
     }
     finte_strlcpy(out, name, cap);
 }
@@ -947,19 +955,27 @@ int finte_disk_info(const char *path, fdfs_info_t *out)
 
 const char *finte_disk_error(int err)
 {
-    switch (err) {
-    case 0: return "ok";
-    case FINTE_ERR_INVAL: return "invalid argument";
-    case FINTE_ERR_NOENT: return "not found";
-    case FINTE_ERR_NOMEM: return "out of memory";
-    case FINTE_ERR_PERM: return "permission denied";
-    case FINTE_ERR_BUSY: return "busy";
-    case FINTE_ERR_LIMIT: return "limit reached";
-    case FINTE_ERR_IO: return "I/O error";
-    case FINTE_ERR_RANGE: return "out of range";
-    case FINTE_ERR_TYPE: return "unknown filesystem";
-    case FINTE_ERR_EXIST: return "already exists";
-    case FINTE_ERR_EOF: return "end of file";
-    default: return "disk error";
+    static const char *const messages[] = {
+        "ok",
+        "invalid argument",
+        "not found",
+        "out of memory",
+        "permission denied",
+        "busy",
+        "disk error",
+        "limit reached",
+        "I/O error",
+        "disk error",
+        "disk error",
+        "disk error",
+        "out of range",
+        "already exists",
+        "unknown filesystem",
+        "disk error",
+        "end of file"
+    };
+    if (err > 0 || err <= -(int)FINTE_ARRAY_SIZE(messages)) {
+        return "disk error";
     }
+    return messages[-err];
 }

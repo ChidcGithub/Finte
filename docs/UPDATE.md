@@ -4,7 +4,8 @@ Short notes only. GitHub releases carry the per-commit changes.
 
 ## 2026-11-21 — table-driven modules
 - Shell dispatch, completion and help share one command table.
-- One ANSI parser serves VGA, GOP and scrollback; host tests now 17.
+- Syscall, verb, node-release and input key maps are table-driven.
+- One ANSI parser serves VGA, GOP and scrollback; host tests now 19.
 - Version follows git: `0.0.0-<short commit>`.
 - Automated image and Windows build releases.
 

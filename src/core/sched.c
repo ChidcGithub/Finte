@@ -368,6 +368,32 @@ int finte_run_status(void)
     return finte_core.status;
 }
 
+static void finish_ready(fflow_t *f)
+{
+    if (f->fuel == 0) {
+        finte_sched_throttle(f);
+    } else {
+        finte_sched_enqueue(f);
+    }
+}
+
+static void finish_dead(fflow_t *f)
+{
+    finte_core.stats.flows_finished++;
+    if (f->ctx) {
+        hal_ctx_destroy(f->ctx);
+        f->ctx = NULL;
+    }
+    fhandle_t self = f->self;
+    finte_node_unref(self);
+}
+
+/* Indexed by FINTE_FLOW_*; blocked/sleeping flows stay where they are. */
+static void (*const finish_ops[])(fflow_t *) = {
+    [FINTE_FLOW_READY] = finish_ready,
+    [FINTE_FLOW_DEAD] = finish_dead,
+};
+
 static void run_flow(fcpu_t *cpu, fflow_t *f)
 {
     cpu->current = f;
@@ -390,26 +416,8 @@ static void run_flow(fcpu_t *cpu, fflow_t *f)
     hal_timer_stop_cpu();
     f->cycles += hal_cycles() - c0;
 
-    switch (f->state) {
-    case FINTE_FLOW_READY:
-        if (f->fuel == 0) {
-            finte_sched_throttle(f);
-        } else {
-            finte_sched_enqueue(f);
-        }
-        break;
-    case FINTE_FLOW_DEAD: {
-        finte_core.stats.flows_finished++;
-        if (f->ctx) {
-            hal_ctx_destroy(f->ctx);
-            f->ctx = NULL;
-        }
-        fhandle_t self = f->self;
-        finte_node_unref(self);
-        break;
-    }
-    default:
-        break;
+    if (f->state < FINTE_ARRAY_SIZE(finish_ops) && finish_ops[f->state]) {
+        finish_ops[f->state](f);
     }
     cpu->current = NULL;
 }

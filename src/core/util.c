@@ -85,26 +85,29 @@ int finte_strncmp(const char *a, const char *b, size_t n)
 
 const char *finte_strstatus(int32_t status)
 {
-    switch (status) {
-    case FINTE_OK: return "ok";
-    case FINTE_ERR_INVAL: return "invalid";
-    case FINTE_ERR_NOENT: return "no-entry";
-    case FINTE_ERR_NOMEM: return "no-memory";
-    case FINTE_ERR_PERM: return "permission-denied";
-    case FINTE_ERR_BUSY: return "busy";
-    case FINTE_ERR_AGAIN: return "would-block";
-    case FINTE_ERR_LIMIT: return "limit";
-    case FINTE_ERR_IO: return "io-error";
-    case FINTE_ERR_DEADLOCK: return "deadlock";
-    case FINTE_ERR_NOSYS: return "not-implemented";
-    case FINTE_ERR_FAULT: return "fault";
-    case FINTE_ERR_RANGE: return "out-of-range";
-    case FINTE_ERR_EXIST: return "exists";
-    case FINTE_ERR_TYPE: return "wrong-type";
-    case FINTE_ERR_STATE: return "bad-state";
-    case FINTE_ERR_EOF: return "end-of-stream";
-    default: return "unknown";
+    static const char *const names[] = {
+        "ok",
+        "invalid",
+        "no-entry",
+        "no-memory",
+        "permission-denied",
+        "busy",
+        "would-block",
+        "limit",
+        "io-error",
+        "deadlock",
+        "not-implemented",
+        "fault",
+        "out-of-range",
+        "exists",
+        "wrong-type",
+        "bad-state",
+        "end-of-stream"
+    };
+    if (status > 0 || status <= -(int32_t)FINTE_ARRAY_SIZE(names)) {
+        return "unknown";
     }
+    return names[-status];
 }
 
 typedef struct fout {
@@ -153,12 +156,107 @@ static void out_uint(fout_t *o, uint64_t value, unsigned base, int upper,
     }
 }
 
+typedef struct fmt_ctx {
+    fout_t *out;
+    va_list *ap;
+    int width;
+    int zero;
+    int lng;
+} fmt_ctx_t;
+
+typedef void (*fmt_handler_t)(fmt_ctx_t *ctx);
+
+static void fmt_s(fmt_ctx_t *ctx)
+{
+    const char *s = va_arg(*ctx->ap, const char *);
+    if (!s) {
+        s = "(null)";
+    }
+    int len = (int)finte_strlen(s);
+    int pad = ctx->width > len ? ctx->width - len : 0;
+    while (pad-- > 0) {
+        out_ch(ctx->out, ' ');
+    }
+    out_str(ctx->out, s);
+}
+
+static void fmt_c(fmt_ctx_t *ctx)
+{
+    char ch = (char)va_arg(*ctx->ap, int);
+    int pad = ctx->width > 1 ? ctx->width - 1 : 0;
+    while (pad-- > 0) {
+        out_ch(ctx->out, ' ');
+    }
+    out_ch(ctx->out, ch);
+}
+
+static void fmt_d(fmt_ctx_t *ctx)
+{
+    long long v = ctx->lng ? va_arg(*ctx->ap, long long)
+                           : va_arg(*ctx->ap, int);
+    if (v < 0) {
+        out_ch(ctx->out, '-');
+        out_uint(ctx->out, (uint64_t)(-(v + 1)) + 1u, 10, 0,
+                 ctx->width > 0 ? ctx->width - 1 : 0, ctx->zero);
+    } else {
+        out_uint(ctx->out, (uint64_t)v, 10, 0, ctx->width, ctx->zero);
+    }
+}
+
+static void fmt_u(fmt_ctx_t *ctx)
+{
+    unsigned long long v = ctx->lng
+        ? va_arg(*ctx->ap, unsigned long long)
+        : va_arg(*ctx->ap, unsigned int);
+    out_uint(ctx->out, v, 10, 0, ctx->width, ctx->zero);
+}
+
+static void fmt_x(fmt_ctx_t *ctx)
+{
+    unsigned long long v = ctx->lng
+        ? va_arg(*ctx->ap, unsigned long long)
+        : va_arg(*ctx->ap, unsigned int);
+    out_uint(ctx->out, v, 16, 0, ctx->width, ctx->zero);
+}
+
+static void fmt_x_upper(fmt_ctx_t *ctx)
+{
+    unsigned long long v = ctx->lng
+        ? va_arg(*ctx->ap, unsigned long long)
+        : va_arg(*ctx->ap, unsigned int);
+    out_uint(ctx->out, v, 16, 1, ctx->width, ctx->zero);
+}
+
+static void fmt_p(fmt_ctx_t *ctx)
+{
+    out_str(ctx->out, "0x");
+    out_uint(ctx->out, (uintptr_t)va_arg(*ctx->ap, void *), 16, 0, 0, 0);
+}
+
+static void fmt_percent(fmt_ctx_t *ctx)
+{
+    out_ch(ctx->out, '%');
+}
+
+static const fmt_handler_t fmt_handlers[128] = {
+    ['s'] = fmt_s,
+    ['c'] = fmt_c,
+    ['d'] = fmt_d,
+    ['u'] = fmt_u,
+    ['x'] = fmt_x,
+    ['X'] = fmt_x_upper,
+    ['p'] = fmt_p,
+    ['%'] = fmt_percent,
+};
+
 int finte_vformat(char *out, size_t cap, const char *fmt, va_list ap)
 {
     fout_t o;
     o.buf = out;
     o.cap = cap;
     o.len = 0;
+    va_list work;
+    va_copy(work, ap);
 
     while (fmt && *fmt) {
         char c = *fmt++;
@@ -185,72 +283,18 @@ int finte_vformat(char *out, size_t cap, const char *fmt, va_list ap)
             lng++;
             c = *fmt++;
         }
-        switch (c) {
-        case 's': {
-            const char *s = va_arg(ap, const char *);
-            if (!s) {
-                s = "(null)";
-            }
-            int len = (int)finte_strlen(s);
-            int pad = width > len ? width - len : 0;
-            while (pad-- > 0) {
-                out_ch(&o, ' ');
-            }
-            out_str(&o, s);
-            break;
-        }
-        case 'c': {
-            char ch = (char)va_arg(ap, int);
-            int pad = width > 1 ? width - 1 : 0;
-            while (pad-- > 0) {
-                out_ch(&o, ' ');
-            }
-            out_ch(&o, ch);
-            break;
-        }
-        case 'd': {
-            long long v = lng ? va_arg(ap, long long) : va_arg(ap, int);
-            if (v < 0) {
-                out_ch(&o, '-');
-                out_uint(&o, (uint64_t)(-(v + 1)) + 1u, 10, 0,
-                         width > 0 ? width - 1 : 0, zero);
-            } else {
-                out_uint(&o, (uint64_t)v, 10, 0, width, zero);
-            }
-            break;
-        }
-        case 'u': {
-            unsigned long long v = lng ? va_arg(ap, unsigned long long)
-                                       : va_arg(ap, unsigned int);
-            out_uint(&o, v, 10, 0, width, zero);
-            break;
-        }
-        case 'x': {
-            unsigned long long v = lng ? va_arg(ap, unsigned long long)
-                                       : va_arg(ap, unsigned int);
-            out_uint(&o, v, 16, 0, width, zero);
-            break;
-        }
-        case 'X': {
-            unsigned long long v = lng ? va_arg(ap, unsigned long long)
-                                       : va_arg(ap, unsigned int);
-            out_uint(&o, v, 16, 1, width, zero);
-            break;
-        }
-        case 'p':
-            out_str(&o, "0x");
-            out_uint(&o, (uintptr_t)va_arg(ap, void *), 16, 0, 0, 0);
-            break;
-        case '%':
-            out_ch(&o, '%');
-            break;
-        case '\0':
+        if (c == '\0') {
             fmt--;
             break;
-        default:
+        }
+        unsigned char index = (unsigned char)c;
+        if (index < FINTE_ARRAY_SIZE(fmt_handlers) &&
+            fmt_handlers[index]) {
+            fmt_ctx_t fctx = { &o, &work, width, zero, lng };
+            fmt_handlers[index](&fctx);
+        } else {
             out_ch(&o, '%');
             out_ch(&o, c);
-            break;
         }
     }
 
@@ -258,6 +302,7 @@ int finte_vformat(char *out, size_t cap, const char *fmt, va_list ap)
         size_t at = o.len < cap - 1 ? o.len : cap - 1;
         out[at] = '\0';
     }
+    va_end(work);
     return (int)o.len;
 }
 

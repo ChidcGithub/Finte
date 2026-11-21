@@ -20,7 +20,7 @@ Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own 
 
 ## Status
 
-- **v0.0.0** (nickname **base**), built as `0.0.0-<short commit>`, 17 self-tests passing on Linux/WSL and Windows.
+- **v0.0.0** (nickname **base**), built as `0.0.0-<short commit>`, 19 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, and a PE32+ UEFI loader with a FAT32 ESP. One hybrid raw image contains both.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
@@ -65,7 +65,7 @@ If you are already in WSL/Linux:
 make all            # host simulator + build/finte.img
 make image          # hybrid BIOS + UEFI USB image
 make user           # build init.elf + ipc.elf (packed into the initrd)
-make test           # 17 extended core self-tests
+make test           # 19 extended core self-tests
 make selfcheck      # startup POST/self-check suite
 make qemu           # BIOS boot, serial console (4 CPUs by default)
 make qemu-uefi      # UEFI/OVMF boot, serial console
@@ -421,7 +421,7 @@ The performance argument is structural: handles are direct indexes, capability c
 - Linux x86_64 persona subset and RAMFS.
 - Host simulator on Linux (ucontext) and Windows (fibers).
 - Startup POST (9 POST checks) and 147 core checks in the kernel.
-- 17 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
+- 19 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
   writable-lfc1 persistence, timer-preemption, NVMe, USB-HID and ring-3 tests.
 
 **Deliberately not here yet**

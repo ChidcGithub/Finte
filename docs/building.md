@@ -40,7 +40,7 @@ make uefi           # build/uefi/BOOTX64.EFI
 make user           # build/init.elf + ipc.elf (ring-3 processes, packed)
 make initrd         # build/initrd.bin
 make image          # build/finte.img (BIOS + UEFI USB image)
-make test           # 17 extended self-tests (host)
+make test           # 19 extended self-tests (host)
 make selfcheck      # startup POST/self-check suite (host)
 make demo           # host-side native pipeline
 make compat         # host-side Linux persona
@@ -274,7 +274,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 
 ## Test matrix
 
-- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 17 host tests, BIOS CLI boot
+- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 19 host tests, BIOS CLI boot
   test, kernel POST, USB mass-storage boot, VGA screenshot, PS/2 keyboard,
   timer preemption (`preempt=OK`), ring-3 `user`/`procs`, 4-CPU SMP boot.
 - 4-CPU scheduler: `selfcheck` 147/147, `demo`, `preempt`, `compat`, `smp`,

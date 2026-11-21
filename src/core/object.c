@@ -98,48 +98,62 @@ void finte_node_ref(fhandle_t h)
     }
 }
 
+static void release_channel(fnode_t *n)
+{
+    fchan_t *ch = &finte_core.channels[n->index];
+    finte_chan_release_queue(ch);
+    ch->in_use = 0;
+}
+
+static void release_arena(fnode_t *n)
+{
+    finte_arena_destroy(&finte_core.arenas[n->index]);
+}
+
+static void release_flow(fnode_t *n)
+{
+    fflow_t *f = &finte_core.flows[n->index];
+    if (f->in_use && (f->state == FINTE_FLOW_DEAD ||
+                      f->state == FINTE_FLOW_FREE)) {
+        if (f->ctx) {
+            hal_ctx_destroy(f->ctx);
+            f->ctx = NULL;
+        }
+        f->in_use = 0;
+    }
+}
+
+static void release_file(fnode_t *n)
+{
+    finte_core.files[n->index].in_use = 0;
+}
+
+static void release_dir(fnode_t *n)
+{
+    fdir_t *d = &finte_core.dirs[n->index];
+    for (uint16_t i = 0; i < d->count; i++) {
+        finte_node_unref(d->ents[i].file);
+    }
+    d->count = 0;
+    d->in_use = 0;
+}
+
+/* Indexed by FINTE_NODE_*; console and free nodes need no cleanup. */
+static void (*const release_ops[])(fnode_t *) = {
+    [FINTE_NODE_CHANNEL] = release_channel,
+    [FINTE_NODE_ARENA] = release_arena,
+    [FINTE_NODE_FLOW] = release_flow,
+    [FINTE_NODE_FILE] = release_file,
+    [FINTE_NODE_DIR] = release_dir,
+};
+
 void finte_node_release(fnode_t *n)
 {
     if (!n || n->type == FINTE_NODE_FREE) {
         return;
     }
-    switch (n->type) {
-    case FINTE_NODE_CHANNEL: {
-        fchan_t *ch = &finte_core.channels[n->index];
-        finte_chan_release_queue(ch);
-        ch->in_use = 0;
-        break;
-    }
-    case FINTE_NODE_ARENA:
-        finte_arena_destroy(&finte_core.arenas[n->index]);
-        break;
-    case FINTE_NODE_FLOW: {
-        fflow_t *f = &finte_core.flows[n->index];
-        if (f->in_use && (f->state == FINTE_FLOW_DEAD ||
-                          f->state == FINTE_FLOW_FREE)) {
-            if (f->ctx) {
-                hal_ctx_destroy(f->ctx);
-                f->ctx = NULL;
-            }
-            f->in_use = 0;
-        }
-        break;
-    }
-    case FINTE_NODE_FILE:
-        finte_core.files[n->index].in_use = 0;
-        break;
-    case FINTE_NODE_DIR: {
-        fdir_t *d = &finte_core.dirs[n->index];
-        for (uint16_t i = 0; i < d->count; i++) {
-            finte_node_unref(d->ents[i].file);
-        }
-        d->count = 0;
-        d->in_use = 0;
-        break;
-    }
-    case FINTE_NODE_CONSOLE:
-    default:
-        break;
+    if (n->type < FINTE_ARRAY_SIZE(release_ops) && release_ops[n->type]) {
+        release_ops[n->type](n);
     }
 
     n->type = FINTE_NODE_FREE;
