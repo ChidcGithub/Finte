@@ -1,0 +1,77 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  image:
+    name: Bootable image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Build image
+        run: make image
+      - name: Run host and core checks
+        run: |
+          make test
+          ./build/finte selfcheck
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finte-image
+          path: build/finte.img
+          if-no-files-found: error
+
+  windows:
+    name: Windows host
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        shell: cmd
+        run: build-win.bat
+      - name: Test
+        shell: cmd
+        run: build\finte.exe test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finte-exe
+          path: build\finte.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [image, windows]
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Resolve version
+        id: version
+        run: echo "value=0.0.0-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: Finte v${{ steps.version.outputs.value }}
+          generate_release_notes: true
+          files: |
+            dist/finte-image/finte.img
+            dist/finte-exe/finte.exe
+          fail_on_unmatched_files: true

@@ -15,11 +15,12 @@ CLANG    ?= clang
 LLD_LINK ?= lld-link
 PYTHON   ?= python3
 BUILD    ?= build
+VERSION_HEADER := $(BUILD)/finte_version.h
 
-HOST_CFLAGS ?= -std=c11 -O2 -g -Wall -Wextra -Isrc/include
+HOST_CFLAGS ?= -std=c11 -O2 -g -Wall -Wextra -Isrc/include -I$(BUILD)
 KCFLAGS := -m64 -std=c11 -O2 -g -ffreestanding -fno-builtin -fno-pic -fno-pie \
            -fno-stack-protector -mno-red-zone -mno-sse -mno-sse2 \
-           -mgeneral-regs-only -Wall -Wextra -Isrc/include
+           -mgeneral-regs-only -Wall -Wextra -Isrc/include -I$(BUILD)
 UEFI_CFLAGS := -target x86_64-pc-windows-msvc -c -ffreestanding \
                -fno-stack-protector -Isrc/include
 USER_CFLAGS := -m64 -std=c11 -O2 -ffreestanding -fno-builtin -fno-pic \
@@ -48,7 +49,13 @@ KERNEL_OBJ := $(patsubst %.c,$(BUILD)/kobj/%.o,$(KERNEL_SRC)) \
 
 .PHONY: all host kernel kernel-elf image uefi bootloader initrd test selfcheck \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
-        disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean
+        disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE
+
+$(VERSION_HEADER): FORCE
+	@mkdir -p $(BUILD)
+	$(PYTHON) tools/gen_version.py $@
+
+FORCE:
 
 all: host image
 
@@ -68,11 +75,11 @@ initrd: $(BUILD)/initrd.bin
 
 user: $(BUILD)/init.elf $(BUILD)/ipc.elf
 
-$(BUILD)/finte: $(HOST_SRC) $(HEADERS)
+$(BUILD)/finte: $(HOST_SRC) $(HEADERS) $(VERSION_HEADER)
 	@mkdir -p $(BUILD)
 	$(CC) $(HOST_CFLAGS) $(HOST_SRC) -o $@
 
-$(BUILD)/kobj/%.o: %.c $(HEADERS) src/arch/x86_64/process.h
+$(BUILD)/kobj/%.o: %.c $(HEADERS) src/arch/x86_64/process.h $(VERSION_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(KCFLAGS) -c $< -o $@
 

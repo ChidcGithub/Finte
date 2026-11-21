@@ -22,10 +22,16 @@ call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b 1
 
 if not exist build mkdir build
+set "PYTHON=python"
+where python >nul 2>nul
+if errorlevel 1 set "PYTHON=py -3"
+%PYTHON% tools\gen_version.py build\finte_version.h
+if errorlevel 1 exit /b 1
+
 set "CLANGCL=%ProgramFiles%\LLVM\bin\clang-cl.exe"
 if not exist "%CLANGCL%" set "CLANGCL=clang-cl"
 
-"%CLANGCL%" /nologo /std:c11 /O2 /W3 /Isrc\include ^
+"%CLANGCL%" /nologo /std:c11 /O2 /W3 /Isrc\include /Ibuild ^
     src\core\util.c src\core\object.c src\core\cap.c src\core\arena.c src\core\channel.c ^
     src\core\flow.c src\core\sched.c src\core\verb.c src\core\compat_linux.c ^
     src\core\demo.c src\core\guest_linux.c src\core\selftest.c src\core\initrd.c ^

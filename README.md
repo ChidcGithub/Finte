@@ -78,6 +78,11 @@ make bench          # host microbenchmarks
 python3 tools/lfc1ck.py build/disk-test.img --list
 ```
 
+Builds inside a git checkout report `0.0.0-<7-char commit>`; without git they
+fall back to `0.0.0`. Pushing to `main` runs the release workflow, which
+publishes `finte.img` and `finte.exe` with notes generated since the last
+release.
+
 Native Windows host simulator (MSVC Build Tools + LLVM `clang-cl`):
 
 ```powershell
@@ -478,7 +483,7 @@ run-gui.ps1          windowed QEMU launcher for Windows (BIOS/UEFI)
 
 ## Documentation
 
-- [Finte is alive — v0.0.0 update](docs/UPDATE.md) — milestone notes, the boot transcript, and the celebration.
+- [Finte updates](docs/UPDATE.md) — short changelog; GitHub releases hold per-commit notes.
 - [Disk manager](docs/disk.md) — block devices, MBR/GPT, NTFS/ext4/lfc1, and the lfc1 format.
 - [Architecture](docs/architecture.md) — objects, flows, scheduling, boot path, design trade-offs.
 - [ABI](docs/abi.md) — handles, capabilities, verbs, messages, errors.
