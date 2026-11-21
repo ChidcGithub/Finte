@@ -33,7 +33,7 @@ Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own 
 - **Boot logo and visible shutdown**: the shell prints a cyan `Finte` ASCII logo after POST. `shutdown` walks through a staged checklist — shell, idle CPUs, disk flush, timer preemption, interrupts — with short pauses, then powers off.
 - **Native CAS**: `cas` parses polynomial expressions with exact rational coefficients and simplifies, differentiates (`cas diff`) or evaluates (`cas eval`) them entirely in the kernel — no external tools, no floating point.
 - **Startup performance**: the GOP console draws glyphs with packed 64-bit stores and skips clearing rows that are already blank. With serial disabled, the BIOS path reaches the shell in about 0.8 seconds; UEFI wall time is dominated by OVMF firmware.
-- **Isolated user processes**: `user` and `procs` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code and data; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, and process-kill on a kernel-memory fault.
+- **Isolated user processes**: `user`, `procs` and `services` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code, data and page-scoped arena window; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, page-level arena caps, and process-kill on a kernel-memory fault.
 - **3-strike watchdog**: unexpected user faults, scheduler deadlocks and disk-sync failures add a strike. On the third, the kernel prints a red panic and powers off. `selfcheck` and the expected `procs` fault are excluded. `watchdog` shows the state, `watchdog test` injects a strike, and `watchdog reset` clears it.
 - **Ring 3 / ELF64**: `user` loads `init.elf` from the initrd as an isolated process, enters CPL3 through a GDT/TSS and `int 0x80` gate, and returns to the shell when the process exits.
 - **Firmware input and storage**: UEFI ConIn provides USB-HID keyboard input; firmware Block I/O reaches NVMe and USB storage alongside native SATA.
@@ -258,7 +258,7 @@ finte> demo
 [shell] pipeline=OK checksum=650/650 denied=2
 finte> procs
 ...
-[procs] ipc=OK isolation=OK shm=OK time=OK preempt=OK fault=OK heartbeat=3
+[procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK heartbeat=3
 finte> shutdown
 [shutdown] Finte is going down
   [ ok ] stopped shell input
@@ -272,8 +272,9 @@ finte> shutdown
 Commands: `help`, `uname`, `uptime`, `mem`, `boot`, `disks`, `parts`, `mount`,
 `umount`, `fsinfo`, `df`, `cd`, `pwd`, `ls`, `cat`, `stat`, `write`, `mkdir`,
 `rm`, `touch`, `cp`, `mv`, `head`, `tail`, `hexdump`, `tree`, `sync`, `user`,
-`procs`, `watchdog`, `ps`, `demo`, `preempt`, `smp`, `compat`, `selfcheck`,
-`clear`, `color`, `cas`, `echo`, `motd`, `reboot`, `shutdown`, `halt`. The
+`procs`, `services`, `watchdog`, `ps`, `demo`, `preempt`, `smp`, `compat`,
+`selfcheck`, `clear`, `color`, `cas`, `echo`, `motd`, `reboot`, `shutdown`,
+`halt`. The
 ramdisk is loaded by the
 bootloader (raw sectors on BIOS, FAT32 file on UEFI), not by a Linux file
 system. The disk manager mounts NTFS, ext4 and lfc1 partitions; lfc1 is
@@ -298,11 +299,13 @@ unmounted /mnt
 ```
 
 `user` loads the ELF64 `init.elf` from the initrd into its own address space
-and runs it in ring 3; exiting returns to the shell. `procs` starts four
-isolated `ipc.elf` processes: one sends a capability-checked message and then
-faults on supervisor memory, one receives and verifies that the same virtual
-address holds a different private value, one busy-spins, and one wakes from
-sleeps to update a shared heartbeat. The command prints a six-part result:
+and runs it in ring 3; exiting returns to the shell. `procs` and `services`
+start four isolated `ipc.elf` processes: one maps its own arena page, sends a
+capability-checked message and then faults on supervisor memory; one maps a
+different page at the same virtual address, verifies isolation, receives the
+message and checks that the address holds its own private value; one busy-spins;
+and one wakes from sleeps to update a shared heartbeat. The command prints a
+seven-part result:
 IPC, isolation, shared memory, sleep, preemption and fault kill.
 
 `preempt` starts a spinner and a stopper; the spinner never yields, so it can
