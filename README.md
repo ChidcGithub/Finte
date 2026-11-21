@@ -20,7 +20,7 @@ Finte is a from-scratch x86_64 system core and a small CLI OS. It has its **own 
 
 ## Status
 
-- **v0.0.0** (nickname **base**), 17 self-tests passing on Linux/WSL and Windows.
+- **v0.0.0** (nickname **base**), built as `0.0.0-<short commit>`, 17 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, and a PE32+ UEFI loader with a FAT32 ESP. One hybrid raw image contains both.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
