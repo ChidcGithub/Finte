@@ -72,7 +72,7 @@ jobs:
           tag=$(git tag --sort=-creatordate | grep -vx "$current" | head -n1 || true)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Build release notes
-        run: sh tools/release_notes.sh "${{ steps.previous.outputs.tag }}" release-notes.md
+        run: sh tools/release_notes.sh "${{ steps.previous.outputs.tag }}" release-notes.md "v${{ steps.version.outputs.value }}"
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:

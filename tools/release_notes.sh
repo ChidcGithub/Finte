@@ -5,6 +5,7 @@ set -eu
 
 prev="${1:-}"
 out="${2:-release-notes.md}"
+current="${3:-HEAD}"
 repo="${GITHUB_REPOSITORY:-ChidcGithub/Finte}"
 
 {
@@ -27,7 +28,7 @@ repo="${GITHUB_REPOSITORY:-ChidcGithub/Finte}"
     echo "- \`finte.exe\` — native Windows host build"
     if [ -n "$prev" ]; then
         echo
-        echo "**Full Changelog**: https://github.com/$repo/compare/$prev...HEAD"
+        echo "**Full Changelog**: https://github.com/$repo/compare/$prev...$current"
     fi
 } > "$out"
 
