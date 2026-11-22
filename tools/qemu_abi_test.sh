@@ -1,9 +1,10 @@
 #!/bin/bash
 # Run the x86_64 process ABI suite on a single CPU.
 #
-# QEMU's serial input comes from a FIFO whose write end stays open, and the
-# commands are sent only after the shell prompt appears. This avoids fixed
-# sleep-based input timing and works without a TTY on CI runners.
+# The suite boots the small BIOS image as a floppy. That avoids depending on
+# the host BIOS's translation of a 68 MiB IDE disk, which is not consistent
+# across QEMU/SeaBIOS versions. Serial input comes from a FIFO so the harness
+# works without a TTY and sends commands only after the shell prompt.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p build
@@ -11,16 +12,17 @@ LOG=build/abi-x86.log
 QEMULOG=build/abi-x86-qemu.log
 PROBELOG=build/abi-x86-probe.log
 FIFO=${TMPDIR:-/tmp}/finte-abi-$$.in
+ABI_LINE="abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK"
 
 run_once() {
-    rm -f "$LOG" "$QEMULOG" "$FIFO"
+    rm -f "$LOG" "$QEMULOG" "$PROBELOG" "$PROBELOG.qemu" "$FIFO"
     if ! mkfifo "$FIFO"; then
         echo "x86 process ABI test: cannot create $FIFO" >&2
         return 1
     fi
     qemu-system-x86_64 -m 256M -smp 1 -machine pc -accel tcg \
-        -drive format=raw,file=build/finte.img,if=ide,index=0,media=disk \
-        -boot c -display none -monitor none -no-reboot -snapshot \
+        -fda build/finte-bios.img -boot a \
+        -display none -monitor none -no-reboot -snapshot \
         -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
         -serial stdio -D "$QEMULOG" -d guest_errors < "$FIFO" > "$LOG" 2>&1 &
     local qpid=$!
@@ -37,18 +39,14 @@ run_once() {
         sleep 0.1
     done
     if kill -0 "$qpid" 2>/dev/null; then
-        printf 'abi\nshutdown\n' >&3 || true
+        printf 'abi\n' >&3 || true
     else
         echo "[abi] QEMU exited before the shell prompt" >&2
     fi
     exec 3>&-
 
-    # Wait for the result, then stop QEMU. The shutdown path may halt the
-    # machine without terminating the emulator, so PASS is the stop signal.
-    local pass=0
     for i in $(seq 1 600); do
         if grep -q "abi: PASS" "$LOG" 2>/dev/null; then
-            pass=1
             break
         fi
         if ! kill -0 "$qpid" 2>/dev/null; then
@@ -62,43 +60,44 @@ run_once() {
     local qstatus=0
     wait "$qpid" 2>/dev/null
     qstatus=$?
-    echo "qemu pass=$pass status=$qstatus" >> "$LOG"
+    echo "qemu status=$qstatus" >> "$LOG"
     rm -f "$FIFO"
-    if [ "$pass" -eq 0 ]; then
-        {
-            echo "--- QEMU diagnostics ---"
-            uname -m
-            command -v qemu-system-x86_64 || echo "qemu binary missing"
-            qemu-system-x86_64 --version 2>&1 | head -2 || true
-            echo "qemu exit status: $qstatus"
-            timeout 3 qemu-system-x86_64 -machine pc -accel tcg -display none \
-                -serial none -monitor none -no-reboot -S >/dev/null 2>&1
-            echo "minimal qemu probe status: $?"
-            rm -f "$PROBELOG" "$PROBELOG.qemu"
-            timeout 10 qemu-system-x86_64 -m 256M -smp 1 -machine pc \
-                -accel tcg \
-                -drive format=raw,file=build/finte.img,if=ide,index=0,media=disk \
-                -boot c -display none -monitor none -no-reboot \
-                -serial "file:$PROBELOG" -D "$PROBELOG.qemu" \
-                -d guest_errors,cpu_reset >/dev/null 2>&1
-            echo "foreground boot probe status: $?"
-            if [ -s "$PROBELOG" ]; then
-                echo "--- foreground boot output ---"
-                head -20 "$PROBELOG" | tr -d '\000' |
-                    sed 's/\x1b\[[0-9;]*m//g'
-            fi
-            if [ -s "$PROBELOG.qemu" ]; then
-                echo "--- foreground QEMU log ---"
-                head -40 "$PROBELOG.qemu" | tr -d '\000'
-            fi
-            if [ -s "$QEMULOG" ]; then
-                echo "--- QEMU internal log ---"
-                tail -60 "$QEMULOG" | tr -d '\000' | sed 's/\x1b\[[0-9;]*m//g'
-            fi
-        } >> "$LOG"
+
+    if grep -q "abi: PASS" "$LOG" &&
+        grep -Fq "$ABI_LINE" "$LOG"; then
+        return 0
     fi
-    grep -q "abi: PASS" "$LOG" &&
-        grep -Fq "abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" "$LOG"
+
+    {
+        echo "--- QEMU diagnostics ---"
+        uname -m
+        command -v qemu-system-x86_64 || echo "qemu binary missing"
+        qemu-system-x86_64 --version 2>&1 | head -2 || true
+        echo "qemu exit status: $qstatus"
+        timeout 3 qemu-system-x86_64 -machine pc -accel tcg -display none \
+            -serial none -monitor none -no-reboot -S >/dev/null 2>&1
+        echo "minimal qemu probe status: $?"
+        timeout 10 qemu-system-x86_64 -m 256M -smp 1 -machine pc \
+            -accel tcg -fda build/finte-bios.img -boot a \
+            -display none -monitor none -no-reboot -snapshot \
+            -serial "file:$PROBELOG" -D "$PROBELOG.qemu" \
+            -d guest_errors,cpu_reset >/dev/null 2>&1
+        echo "foreground boot probe status: $?"
+        if [ -s "$PROBELOG" ]; then
+            echo "--- foreground boot output ---"
+            head -20 "$PROBELOG" | tr -d '\000' |
+                sed 's/\x1b\[[0-9;]*m//g'
+        fi
+        if [ -s "$PROBELOG.qemu" ]; then
+            echo "--- foreground QEMU log ---"
+            head -40 "$PROBELOG.qemu" | tr -d '\000'
+        fi
+        if [ -s "$QEMULOG" ]; then
+            echo "--- QEMU internal log ---"
+            tail -60 "$QEMULOG" | tr -d '\000' | sed 's/\x1b\[[0-9;]*m//g'
+        fi
+    } >> "$LOG"
+    return 1
 }
 
 if run_once || { echo "x86 process ABI test: retrying"; run_once; }; then
