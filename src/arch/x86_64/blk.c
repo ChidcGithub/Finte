@@ -538,7 +538,8 @@ void blk_boot_info(const fboot_info_t *bi)
 {
     finte_memset(g_fw, 0, sizeof(g_fw));
     g_fw_count = 0;
-    if (!bi || bi->magic != FINTE_BOOT_MAGIC || bi->console_type != 2) {
+    if (!bi || bi->magic != FINTE_BOOT_MAGIC ||
+        bi->console_type != FINTE_BOOT_CONSOLE_UEFI || !bi->fw_services) {
         return;
     }
     uint32_t n = bi->blk_count;

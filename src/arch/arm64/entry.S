@@ -2,6 +2,9 @@
 .section .text.boot, "ax"
 .globl _start
 _start:
+    mov x19, x0
+    mov x20, x1
+
     mrs x0, mpidr_el1
     and x0, x0, #0xff
     cbnz x0, park
@@ -21,6 +24,8 @@ _start:
     str xzr, [x1], #8
     b 1b
 2:
+    mov x0, x19
+    mov x1, x20
     bl kmain_arm64
 
 park:

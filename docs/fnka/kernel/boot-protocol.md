@@ -1,180 +1,182 @@
 # Boot protocol
 
-> **Status:** Partial — x86_64 has a versioned `fboot_info` handoff used by both
-> BIOS and UEFI loaders. arm64 uses a different, argument-less ELF handoff. The
-> two paths are not unified, and x86 UEFI does not call `ExitBootServices`.
+> **Status:** Implemented for v1 on x86_64 BIOS, x86_64 UEFI and arm64 UEFI.
+> The kernel validates the structure and every described range. The memory map
+> and ACPI/DTB pointers are passed through, but the kernel does not yet use
+> them to replace the fixed heap/page allocator.
 >
 > **Normative for:** the boot-to-kernel interface, ownership of boot-provided
-> memory, firmware references and the path to a single cross-architecture
-> protocol.
+> memory, firmware references and the data every producer must supply.
 >
 > **Related:** [Memory model](memory-model.md), [x86_64](../architecture/x86_64.md),
 > [arm64](../architecture/arm64.md), [Bootloader](../../bootloader.md).
 
-## 1. Current x86_64 handoff
+## 1. Entry convention
 
-The x86_64 kernel entry expects:
+The struct is `fboot_info_t` in `src/include/finte/boot.h`:
 
-- `RDI` = physical address of `fboot_info_t`;
-- `RSI` = `FINTE_BOOT_MAGIC` (`0xF17E0001`).
+- `magic = FINTE_BOOT_MAGIC` (`0xF17E0001`);
+- `version = FINTE_BOOT_VERSION` (1);
+- `header_size` and `total_size` = `FINTE_BOOT_INFO_BYTES` (568);
+- `arch` = `FINTE_BOOT_ARCH_X86_64` or `FINTE_BOOT_ARCH_ARM64`;
+- `platform` = `FINTE_BOOT_PLATFORM_BIOS` or `FINTE_BOOT_PLATFORM_UEFI`.
 
-The kernel copies these registers before clearing `.bss`, then passes them to
-`kmain(boot_arg, magic)`.
+x86_64 passes the physical struct address in `RDI` and the magic in `RSI`.
+AArch64 passes the struct in `x0` and the magic in `x1`. The arm64 `_start`
+preserves the arguments across `.bss` clearing and forwards them to
+`kmain_arm64(boot_arg, magic)`.
 
-`fboot_info_t` is defined in `src/include/finte/boot.h`:
+The kernel calls `finte_boot_validate(bi, expected_arch)` before using any
+field. On failure it reports the validation code and falls back to the
+Multiboot path if that magic is present.
 
-| Field | Meaning |
+## 2. Structure
+
+| Field group | Contents |
 | --- | --- |
-| `magic` | `FINTE_BOOT_MAGIC` |
-| `boot_drive` | BIOS drive number |
-| `kernel_size` | Flat kernel size |
-| `ramdisk_addr`, `ramdisk_size` | Initrd location |
-| `version` | Boot info version (currently 1) |
-| `console_type` | 1 = VGA text, 2 = UEFI ConOut |
-| `efi_system_table` | UEFI system table pointer |
-| `efi_con_in`, `efi_con_out` | UEFI console protocols |
-| `fb_addr`, `fb_pitch`, `fb_width`, `fb_height`, `fb_bpp`, `fb_format` | GOP framebuffer |
-| `fw_idt_base`, `fw_idt_limit` | Firmware IDT for UEFI Boot Services |
-| `blk_count`, `blk[]` | Firmware Block I/O descriptors |
-| `input_usb` | USB keyboard hint |
+| Identity | `magic`, `version`, `header_size`, `total_size`, `arch`, `platform` |
+| Kernel | `kernel_base`, `kernel_size` |
+| Ramdisk | `ramdisk_addr`, `ramdisk_size` |
+| Console | `console_type` (`VGA`, `UEFI`, `PL011`, `NONE`) |
+| Framebuffer | `fb_addr`, `fb_pitch`, `fb_width`, `fb_height`, `fb_bpp`, `fb_format` |
+| Memory map | `memmap_addr`, `memmap_count`, `memmap_desc_size` |
+| Modules | `modules_addr`, `module_count`, `module_desc_size` |
+| Firmware | `efi_system_table`, `efi_con_in`, `efi_con_out`, `fw_idt_base`, `fw_idt_limit`, `fw_services` |
+| Firmware disk/input | `blk_count`, `blk[]`, `input_usb` |
+| Platform data | `acpi_addr`, `dtb_addr` |
+| Optional data | `cmdline_addr/size`, `entropy_addr/size` |
 
-### BIOS path
+Flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `FINTE_BOOT_FLAG_MEMMAP` | `memmap_addr/count/desc_size` are valid |
+| `FINTE_BOOT_FLAG_ACPI` | `acpi_addr` points to ACPI tables |
+| `FINTE_BOOT_FLAG_DTB` | `dtb_addr` points to a Device Tree |
+| `FINTE_BOOT_FLAG_FRAMEBUFFER` | framebuffer fields are valid |
+| `FINTE_BOOT_FLAG_MODULES` | module array is valid |
+| `FINTE_BOOT_FLAG_FW_SERVICES` | firmware pointers remain callable |
+
+### Memory map
+
+`fboot_mmap_entry_t` is a normalized 24-byte entry:
+
+```c
+typedef struct fboot_mmap_entry {
+    uint64_t base;
+    uint64_t length;
+    uint32_t type;   /* FINTE_BOOT_MMAP_USABLE, RESERVED, ACPI_*, ... */
+    uint32_t flags;
+} fboot_mmap_entry_t;
+```
+
+UEFI producers translate `EFI_MEMORY_DESCRIPTOR` types into this vocabulary.
+The x86 BIOS producer stores the 24-byte E820 entries directly; their layout
+matches (`base`, `length`, `type`, `attributes`).
+
+### Modules
+
+`fboot_module_t` describes a ramdisk, initrd or payload. x86 BIOS/UEFI describe
+the ramdisk as module 0. arm64 UEFI has no ramdisk in v1.
+
+## 3. Producers
+
+### x86_64 BIOS
 
 `src/boot/stage2.S`:
 
-- loads the flat kernel and ramdisk into low memory;
-- writes `fboot_info` at physical `0x5000`;
-- fills `boot_drive`, `kernel_size`, `ramdisk_addr`, `ramdisk_size`, `version`
-  and `console_type = 1`;
-- enters long mode and jumps to `0x4000000` with `RDI = 0x5000`,
-  `RSI = 0xF17E0001`.
+- zeroes a 2 KiB boot-info area at physical `0x5000`;
+- writes v1 identity, kernel base and console fields;
+- writes a ramdisk module descriptor at `0x5700`;
+- probes E820 into `0x5800`, filters zero-length/type-0 entries and stores up
+  to 64 entries;
+- fills `memmap_addr`, `memmap_count`, `memmap_desc_size = 24` and the
+  `MEMMAP` flag;
+- enters long mode and jumps with `RDI=0x5000`, `RSI=FINTE_BOOT_MAGIC`.
 
-The BIOS path has no UEFI pointers, GOP framebuffer, firmware IDT or firmware
-Block I/O list.
+The map is accessible through the kernel's low identity map.
 
-### UEFI path
+### x86_64 UEFI
 
 `src/uefi/loader.c`:
 
-- opens the ESP with `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`;
-- allocates a 36 MiB kernel region at 64 MiB;
-- reads `KERNEL.BIN` and `RAMDISK.BIN`;
-- fills `fboot_info`, including GOP, firmware IDT and firmware Block I/O
-  descriptors;
-- jumps to the kernel with the same registers.
+- allocates the kernel at 64 MiB and the ramdisk below `0x3F000000`;
+- fills the v1 structure at a loader-allocated page;
+- converts the UEFI memory map and copies ACPI table pointers from the UEFI
+  configuration table;
+- describes the ramdisk as module 0 and the framebuffer from GOP;
+- calls `GetMemoryMap` and `ExitBootServices` in a small retry loop;
+- clears `fw_services`, firmware pointers, Block I/O and ConIn after exit;
+- jumps to the kernel with the validated structure.
 
-The x86 UEFI loader **does not call `ExitBootServices`**. The kernel keeps
-using firmware Block I/O and ConIn, and switches to the firmware IDT through
-`hal_fw_begin()` / `hal_fw_end()` when it calls Boot Services.
+After exit, storage is provided by native ATA/AHCI and the ramdisk; input is
+serial and PS/2. Firmware Block I/O and ConIn are no longer used.
 
-## 2. Current arm64 handoff
+### arm64 UEFI
 
 `src/uefi/loader_arm64.c`:
 
-- reads `\EFI\FINTE\KERNEL.ELF`;
-- allocates the ELF's physical range at `0x40080000`;
-- copies the `PT_LOAD` segments, zeroes the range, flushes the instruction
-  cache;
-- calls `ExitBootServices`;
-- disables interrupts;
-- branches to the ELF entry point with zeroed argument registers.
+- loads the ELF at `0x40080000`;
+- converts the UEFI memory map into `boot_mmap[]`;
+- copies ACPI and Device Tree pointers from the UEFI configuration table when
+  present;
+- captures GOP framebuffer geometry when available;
+- fills the same `fboot_info_t`;
+- calls `ExitBootServices` and passes the structure in `x0`, magic in `x1`.
 
-The arm64 kernel does not consume a boot info structure. It uses the fixed
-PL011 UART, the generic counter, PSCI shutdown and its static heap. There is no
-ramdisk, no firmware Block I/O, no ACPI/DT consumption and no framebuffer
-handoff.
+## 4. Validation
 
-## 3. Ownership rules today
+`src/core/bootinfo.c` checks:
 
-- BIOS `fboot_info` and the ramdisk live in low physical memory. The kernel
-  identity map makes them readable.
-- UEFI `fboot_info` and the kernel/ramdisk region are allocated by the loader.
-  They remain valid because boot services are still active and the loader does
-  not free them.
-- The x86 UEFI firmware pointers are valid only while Boot Services are
-  available. The kernel wraps firmware calls in `hal_fw_begin/end`.
-- arm64 boot services are gone after `ExitBootServices`; the kernel must not
-  call them.
-- The arm64 ELF range is owned by the kernel after the jump.
-
-## 4. Target protocol
-
-The target is one versioned handoff structure for both architectures. It should
-contain, at minimum:
-
-- protocol version and structure size;
+- magic and version;
+- `header_size >= FINTE_BOOT_INFO_BYTES` and `total_size >= header_size`;
 - architecture and platform identifiers;
-- kernel image and loaded-segment information, if needed;
-- a physical memory map with region types;
-- ACPI and/or Device Tree references;
-- framebuffer information, if available;
-- boot command line or configuration data;
-- initrd/module descriptors;
-- entropy or random-seed information, if safely available;
-- pointer ownership and lifetime rules.
+- console type;
+- kernel base and kernel size;
+- ramdisk, command-line and entropy ranges (non-zero address when size > 0,
+  no overflow);
+- memory-map count, descriptor size and each entry's type/length/overflow;
+- module count, descriptor size and each module range;
+- framebuffer address, dimensions, bpp and pitch;
+- firmware flags: if `FW_SERVICES` is set, the firmware pointers must be
+  present; if not set, `fw_services` must be zero.
 
-Every pointer must have defined ownership. The kernel must validate all
-boot-provided data before using it.
+`finte_boot_mmap_usable()` can check whether a range lies in a usable map
+entry. It is available for future allocator integration.
 
-After handoff, the kernel should establish its own memory management and
-interrupt configuration. Any use of UEFI runtime services should be a separate,
-explicitly designed feature.
+## 5. Ownership and lifetime
 
-## 5. Proposed handoff sequence
+- The producer owns the structure until the jump.
+- The kernel treats all pointers as physical addresses in the boot address
+  space and validates ranges before use.
+- x86 BIOS data lives below `0x8000` and in the low identity map.
+- UEFI memory-map and module arrays live in loader-owned static memory; after
+  `ExitBootServices` they remain valid until the kernel copies or abandons
+  them.
+- ACPI/DTB tables remain firmware-owned memory; the kernel must not write them.
+- The kernel does not call firmware services after x86/arm64 UEFI exit.
+- The kernel parses the ramdisk in place; the producer's memory remains
+  reserved for the kernel lifetime. It does not own the boot-info page.
 
-1. Firmware loads the bootloader.
-2. Bootloader loads the kernel and optional modules.
-3. Bootloader collects memory map, ACPI/DT, framebuffer and entropy.
-4. Bootloader calls `ExitBootServices`.
-5. Bootloader disables interrupts and passes a validated handoff structure.
-6. Kernel validates magic, version and every pointer/range.
-7. Kernel builds its own page tables and interrupt state.
-8. Kernel copies or takes ownership of all boot data it needs.
-9. Kernel discards firmware references unless a runtime-services feature is
-   explicitly enabled.
+## 6. Current limitations
 
-## 6. Invariants
+- The x86 kernel still uses a fixed 1 GiB identity map and static heap; it does
+  not consume the memory map to build a physical allocator yet.
+- The arm64 kernel does not parse the DTB or ACPI tables yet.
+- The x86 UEFI path no longer has firmware ConIn; USB-only keyboards need a
+  future native HID driver.
+- No command-line, entropy or additional module producers yet.
+- ACPI/DTB pointers are passed through but not validated beyond non-zero.
+- The memory map is informational until the Phase 1 memory manager lands.
 
-1. The kernel never trusts a boot-provided pointer without validation.
-2. Every boot-provided memory range has an owner.
-3. Firmware services are not called after `ExitBootServices`.
-4. The x86 BIOS and UEFI paths produce the same semantic structure.
-5. The arm64 path produces the same semantic structure as x86_64.
-6. The kernel does not depend on the loader's stack, page tables or code after
-   handoff.
-7. Unknown protocol versions are rejected safely.
-8. A missing optional component (framebuffer, initrd, entropy) is reported,
-   not guessed.
+## 7. Test evidence
 
-## 7. Current limitations
-
-- Two different handoff mechanisms.
-- arm64 has no boot info structure.
-- x86 UEFI keeps firmware services and the firmware IDT.
-- No physical memory map in the handoff.
-- No ACPI/DT pointer.
-- No module list beyond a single ramdisk.
-- No command line, entropy or platform identifier.
-- No structure size field beyond `version`.
-- No unified validation code.
-
-## 8. Open questions
-
-- The exact v1/v2 structure layout and versioning policy.
-- How x86_64 should migrate from firmware Block I/O/ConIn to native drivers.
-- Whether `ExitBootServices` happens in the loader or the early kernel.
-- How ACPI and Device Tree are represented uniformly.
-- How modules/initrds are described and owned.
-- How entropy is passed safely.
-- How the protocol handles Secure Boot and measured boot.
-- How to test the same handoff on both architectures.
-
-## 9. Test evidence
-
-- `make qemu-test`: BIOS handoff, ramdisk and shell.
-- `make qemu-uefi-test`: UEFI handoff, firmware Block I/O, GOP and shell.
-- `make qemu-disk-test` / `make qemu-uefi-disk-test`: block device handoff and
-  filesystems.
-- `make images`: x86_64 BIOS/UEFI IMG and ISO; arm64 UEFI IMG and ISO.
-- `make arm64-test`: direct ELF boot; no boot info structure.
-- No unified boot-protocol conformance test yet.
+- `src/tests/test_main.c`: `boot protocol` validates a good structure, rejects
+  bad magic/version/map entries and checks usable-range lookup.
+- `make test`: 21 host tests pass.
+- `make qemu-test`: x86 BIOS, E820 map, ramdisk module, 147 checks.
+- `make qemu-uefi-test`: x86 UEFI, memory map, modules, `fw=0`, 147 checks.
+- `make qemu-uefi-disk-test`: AHCI after `ExitBootServices`.
+- `make arm64-test`: direct ELF boot without a boot structure.
+- arm64 AAVMF ISO/IMG: protocol v1, memory map, ACPI pointer, 147 checks.
+- x86_64 BIOS/UEFI ISO and arm64 ISO/IMG boot checks pass locally.

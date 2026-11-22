@@ -20,11 +20,11 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 
 ## Status
 
-- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 20 self-tests passing on Linux/WSL and Windows.
+- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 21 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, PE32+ UEFI loaders for x86_64 and arm64, and FAT ESPs. `make images` produces x86_64 BIOS/UEFI hybrid media and arm64 UEFI ISO/IMG media.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
-- **Disk manager** with MBR/GPT partitions, ATA PIO (BIOS), AHCI and firmware Block I/O (UEFI), writable **lfc1 v2**, and read-only **NTFS**/**ext4**. An 8-entry read cache, atomic superblock-last sync, host `lfc1ck.py` validation/compaction, and capability-backed file handles.
+- **Disk manager** with MBR/GPT partitions, ATA PIO (BIOS), AHCI (UEFI; firmware Block I/O only if `fw_services`), writable **lfc1 v2**, and read-only **NTFS**/**ext4**. An 8-entry read cache, atomic superblock-last sync, host `lfc1ck.py` validation/compaction, and capability-backed file handles.
 - **Shell** with `cd`/`pwd`, `write`, `mkdir`, `rm`, `touch`, `cp`, `mv`, `head`, `tail`, `hexdump`, `tree`, `df`, `sync`, history, arrows, home/end/delete and tab completion, in addition to the diagnostic commands.
 - **Timer preemption**: PIT at 100 Hz on the BSP, calibrated LAPIC timers on APs, PIC/LAPIC EOI handling, RFLAGS-aware context switching. Flows run with interrupts enabled; the scheduler and verb dispatcher run with them off. The `preempt` command proves two non-yielding flows make progress.
 - **Flow/Thread split**: each Flow now owns an internal `fthread_t` with its own context, stack, CPU affinity, scheduling state and runtime accounting; Fuel, capabilities and task state stay on the Flow. User-visible Thread creation and Parallel Flows are future work.
@@ -38,16 +38,16 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 - **3-strike watchdog**: unexpected user faults, scheduler deadlocks and disk-sync failures add a strike. On the third, the kernel prints a red panic and powers off. `selfcheck` and the expected `procs` fault are excluded. `watchdog` shows the state, `watchdog test` injects a strike, and `watchdog reset` clears it.
 - **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; an arm64 QEMU `virt` backend uses PL011, the generic counter, PSCI and the same scheduler. `make arm64-test` runs all 147 core checks under `qemu-system-aarch64`.
 - **Ring 3 / ELF64**: `user` loads `init.elf` from the initrd as an isolated process, enters CPL3 through a GDT/TSS and `int 0x80` gate, and returns to the shell when the process exits.
-- **Firmware input and storage**: UEFI ConIn provides USB-HID keyboard input; firmware Block I/O reaches NVMe and USB storage alongside native SATA.
+- **Boot Protocol v1**: x86 BIOS, x86 UEFI and arm64 UEFI produce one validated structure with kernel/ramdisk, E820 or UEFI memory map, ACPI/DTB, modules and framebuffer. Both UEFI loaders call `ExitBootServices`; the kernel no longer uses firmware Block I/O or ConIn.
 - Runs the **same producer/transform/sink pipeline** in the host simulator and on the metal image.
 - Runs the **Linux x86_64 persona** in both environments.
 - Native Windows host build uses Win32 fibers; Linux uses `ucontext`.
 
 **Physical-hardware status:** verified under QEMU's BIOS and UEFI firmware,
-including a 4-CPU SMP boot, **USB mass-storage attachment**, **NVMe storage**,
-**USB HID keyboard input**, **windowed GTK GUI**, and **PS/2 keyboard input** to
-the shell. It has not yet been validated on a specific physical laptop. Secure
-Boot must be off (the UEFI loader is unsigned).
+including a 4-CPU SMP boot, USB mass-storage boot media, AHCI after
+`ExitBootServices`, a windowed GTK GUI, and PS/2/serial shell input. NVMe and
+USB-HID input need native drivers. It has not yet been validated on a specific
+physical laptop. Secure Boot must be off (the UEFI loader is unsigned).
 
 ## Quick start
 
@@ -69,7 +69,7 @@ make image          # hybrid BIOS + UEFI USB image
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
 make user           # build init.elf + ipc.elf (packed into the initrd)
-make test           # 20 extended core self-tests
+make test           # 21 extended core self-tests
 make selfcheck      # startup POST/self-check suite
 make qemu           # BIOS boot, serial console (4 CPUs by default)
 make qemu-uefi      # UEFI/OVMF boot, serial console
@@ -154,10 +154,10 @@ hardware virtualization automatically, with TCG as a fallback; `-Accel tcg`
 forces software emulation. WHPX runs with the **SDL** frontend because QEMU's
 GTK frontend can stall before the guest starts on some Windows/WHPX setups;
 TCG uses GTK. The launcher also switches the SDL window to the US keyboard
-layout so the Windows IME cannot swallow letter keys. Direct PS/2 is the default
-for low typing latency; `-UsbKeyboard` adds a virtual USB keyboard through UEFI
-ConIn for systems that need it. The guest image and its multi-core behavior are
-unchanged.
+layout so the Windows IME cannot swallow letter keys. Direct PS/2 is the
+default for low typing latency. `-UsbKeyboard` now warns and falls back to PS/2
+because the UEFI loader exits boot services; USB-HID input needs a native
+driver. The guest image and its multi-core behavior are unchanged.
 QEMU diagnostics are written to `%LOCALAPPDATA%\FinteGUI\qemu.log` instead of
 cluttering the launcher with benign firmware/WHPX warnings.
 
@@ -450,10 +450,13 @@ The performance argument is structural: handles are direct indexes, capability c
 - Own BIOS boot sector/stage2 (CHS) and own x86_64/arm64 UEFI PE loaders.
 - Hybrid x86_64 raw USB image with MBR, FAT32 ESP, BIOS payload and UEFI payload.
 - x86_64 and arm64 ISO/IMG release media; arm64 boots through AAVMF.
-- VGA text console, GOP framebuffer console, PS/2 + serial + UEFI ConIn input.
+- VGA text console, GOP framebuffer console, PS/2 + serial input. Firmware
+  ConIn is unavailable after `ExitBootServices`; USB-HID needs a native driver.
 - CLI shell with ramdisk access, writable lfc1 filesystems, line editing,
   history, completion and diagnostic commands.
-- Disk manager over ATA PIO, AHCI and firmware Block I/O (NVMe/USB storage),
+- Disk manager over ATA PIO and AHCI. Firmware Block I/O remains only for a
+  producer that keeps `fw_services`; current loaders exit boot services, so
+  NVMe/USB storage needs native drivers,
   with MBR/GPT parsing, an 8-entry read cache, an append-only lfc1 v2 writer,
   host-side `lfc1ck.py` validation/compaction, and capability-backed file
   handles.
@@ -471,8 +474,9 @@ The performance argument is structural: handles are direct indexes, capability c
 - Linux x86_64 persona subset and RAMFS.
 - Host simulator on Linux (ucontext) and Windows (fibers).
 - Startup POST (9 POST checks) and 147 core checks in the kernel.
-- 20 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
-  writable-lfc1 persistence, timer-preemption, NVMe, USB-HID and ring-3 tests.
+- 21 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
+  writable-lfc1 persistence, timer-preemption, boot protocol v1 and ring-3
+  tests.
 
 **Deliberately not here yet**
 
@@ -490,12 +494,14 @@ The performance argument is structural: handles are direct indexes, capability c
 - **Writable NTFS/ext4 and journaling.** Only lfc1 is writable. lfc1 sync is
   copy-on-write and append-only, so old trees consume space until compacted on
   the host; there is no journal or automatic garbage collection.
-- **Native NVMe/USB drivers.** UEFI reaches them through firmware Block I/O and
-  ConIn; the loader does not call `ExitBootServices`. BIOS has ATA PIO only.
-- **USB-HID input on a kernel-native stack.** It works through the firmware's
-  ConIn while firmware services remain available.
-- **UEFI ownership.** The loader does not call `ExitBootServices`; the kernel
-  uses a GOP framebuffer and temporarily re-enters the firmware IDT for calls.
+- **Native NVMe/USB drivers.** x86 UEFI uses native AHCI for SATA. NVMe and USB
+  storage still need native drivers; BIOS has ATA PIO only.
+- **USB-HID input on a kernel-native stack.** The UEFI loaders exit boot
+  services, so firmware ConIn is gone. Serial and PS/2 input work; USB-only
+  keyboards need a future HID driver.
+- **UEFI ownership.** Both UEFI loaders call `ExitBootServices` and clear the
+  firmware pointers. The GOP framebuffer remains valid memory; no firmware
+  IDT or Boot Services calls are used after handoff.
 - **Secure Boot.** The UEFI loader is unsigned; disable Secure Boot or sign it.
 - **Physical-hardware validation.** Verified in QEMU SeaBIOS/OVMF, not yet on a
   specific physical laptop.

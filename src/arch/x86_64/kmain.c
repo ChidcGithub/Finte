@@ -31,10 +31,12 @@ static void kprintf(const char *fmt, ...)
 void kmain(uint64_t boot_arg, uint64_t magic)
 {
     const fboot_info_t *bi = NULL;
+    int boot_error = FINTE_BOOT_OK;
     if (magic == FINTE_BOOT_MAGIC) {
-        bi = (const fboot_info_t *)(uintptr_t)boot_arg;
-        if (!bi || bi->magic != FINTE_BOOT_MAGIC) {
-            bi = NULL;
+        fboot_info_t *candidate = (fboot_info_t *)(uintptr_t)boot_arg;
+        boot_error = finte_boot_validate(candidate, FINTE_BOOT_ARCH_X86_64);
+        if (boot_error == FINTE_BOOT_OK) {
+            bi = candidate;
         }
     }
 
@@ -48,9 +50,19 @@ void kmain(uint64_t boot_arg, uint64_t magic)
     kputs("Finte " FINTE_VERSION_STRING " | x86_64 bare metal\n");
     if (bi) {
         kprintf("boot: %s -> long mode -> 1 GiB identity map\n",
-                bi->console_type == 2 ? "custom UEFI loader" : "custom BIOS loader");
+                bi->platform == FINTE_BOOT_PLATFORM_UEFI
+                    ? "custom UEFI loader"
+                    : "custom BIOS loader");
+        kprintf("boot: protocol v%u arch=%u memmap=%u modules=%u fw=%u\n",
+                (unsigned)bi->version, (unsigned)bi->arch,
+                (unsigned)bi->memmap_count, (unsigned)bi->module_count,
+                (unsigned)bi->fw_services);
     } else {
-        kputs("boot: Multiboot fallback -> long mode\n");
+        if (magic == FINTE_BOOT_MAGIC && boot_error != FINTE_BOOT_OK) {
+            kprintf("boot: invalid boot info (%d)\n", boot_error);
+        } else {
+            kputs("boot: Multiboot fallback -> long mode\n");
+        }
     }
     kputs("mode: multi-core capable, preemptive flows, finite budgets\n");
 

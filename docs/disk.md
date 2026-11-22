@@ -19,7 +19,7 @@ shell path (/mnt/docs/file)
   partition: hd0p1 ... hd0pN
         |
   block HAL: ATA PIO (BIOS) | AHCI DMA (UEFI)
-             | firmware Block I/O (NVMe/USB) | host image files
+             | firmware Block I/O (only if fw_services) | host image files
 ```
 
 ## Commands
@@ -96,23 +96,21 @@ block on disk probing.
 | --- | --- | --- |
 | BIOS / SeaBIOS | ATA PIO | primary/secondary, master/slave; LBA28 and LBA48; up to 4 drives |
 | UEFI / q35 | AHCI DMA | PCI class `0x010601`; SATA disks; up to 8 devices |
-| UEFI firmware | Block I/O protocol | NVMe and USB mass storage exposed by firmware; 512-byte blocks |
+| UEFI firmware | Block I/O protocol | Only if `fw_services`; inactive for current loaders |
 | Host simulator | raw image files | `finte disk <image> ...` and the test scripts |
 
 BIOS builds identity-map the first 1 GiB, so AHCI BARs above that range are not
 probed there. AHCI is used on the UEFI path, which keeps OVMF's mappings.
 
-Firmware block devices are appended after native ATA/AHCI devices. Devices whose
-capacity matches a native disk are filtered out so the usual `hd0`/`hd1` names
-do not change on OVMF. A firmware device that is not a duplicate (NVMe, USB
-storage) appears as the next `hdN` and can be mounted directly, including
-whole-disk lfc1.
+Firmware block devices are appended after native ATA/AHCI devices only when the
+boot producer sets `fw_services`. Current x86 and arm64 UEFI loaders exit boot
+services and clear it, so the runtime uses native ATA/AHCI. The firmware Block
+I/O path remains for a future producer that keeps firmware services.
 
-Firmware calls require the firmware IDT and interrupts, while the kernel runs on
-its own IDT. `hal_fw_begin()` / `hal_fw_end()` temporarily switch IDTs, save and
-restore the caller's interrupt state, and let the firmware service its own timer
-and device interrupts. Firmware disk operations are slow: about **2 seconds per
-operation** under QEMU, so `mount`, `sync` and `umount` are visibly deliberate.
+Firmware calls would require the firmware IDT and interrupts, while the kernel
+runs on its own IDT. `hal_fw_begin()` / `hal_fw_end()` temporarily switch IDTs,
+save and restore the caller's interrupt state, and let the firmware service its
+own timer and device interrupts. This path is inactive for current loaders.
 
 ## Partition tables
 
@@ -308,17 +306,9 @@ make qemu-uefi-disk-test   # UEFI/AHCI + MBR + lfc1/ext4/NTFS
 ```
 
 Writable lfc1 is exercised by the shell tests: create, write, mkdir, cp, sync,
-umount, remount and read back. The UEFI firmware path is tested with an NVMe
-image attached to QEMU:
-
-```bash
-qemu-system-x86_64 -machine q35 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-  -drive if=pflash,format=raw,file=build/OVMF_VARS_4M.fd \
-  -drive format=raw,file=build/finte.img,if=ide,index=0,media=disk \
-  -drive format=raw,file=build/nvme-test.img,if=none,id=nvme0 \
-  -device nvme,drive=nvme0,serial=finte0
-```
+umount, remount and read back. The current UEFI loader exits boot services, so
+the firmware Block I/O NVMe path is inactive; use the AHCI test disk. A future
+native NVMe driver will restore that path.
 
 The Windows GUI launcher can attach the same test disk:
 
@@ -336,8 +326,8 @@ partitions and deterministic file contents. A GPT image can be made with
 - lfc1 has no journal, permissions, timestamps, hard links or symlinks. Sync is
   atomic at the superblock, but an interrupted sync leaves the previous tree.
 - Every sync appends a full tree; compact with `tools/lfc1ck.py --compact`.
-- NVMe and USB storage are reached through UEFI firmware Block I/O, not native
-  drivers. BIOS has ATA PIO only.
+- NVMe and USB storage require native drivers; the current UEFI loaders exit
+  boot services, so firmware Block I/O is unavailable. BIOS has ATA PIO only.
 - The mount table is prefix-based; there is no VFS inode cache, page cache or
   concurrent writer protocol.
 - NTFS attribute lists and ext4 journal recovery are not implemented.

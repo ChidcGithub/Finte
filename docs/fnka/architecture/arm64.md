@@ -1,8 +1,8 @@
 # arm64 port
 
 > **Status:** Partial — builds, boots under QEMU `virt`, passes the 147 core
-> checks and has UEFI IMG/ISO media. It has no MMU, GIC, timer interrupt, SMP
-> or user mode.
+> checks, produces boot protocol v1 and has UEFI IMG/ISO media. It has no MMU,
+> GIC, timer interrupt, SMP or user mode.
 >
 > **Scope:** AArch64-specific boot, CPU, memory and interrupt mechanisms.
 > Shared semantics are in the concept and kernel documents.
@@ -18,8 +18,9 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 256M -smp 1 \
 ```
 
 - The ELF is linked at `0x40080000`.
-- `_start` reads `MPIDR_EL1`, parks secondary CPUs, installs the vector table,
-  sets the stack, zeroes `.bss` and calls `kmain_arm64()`.
+- `_start` preserves the boot arguments, reads `MPIDR_EL1`, parks secondary
+  CPUs, installs the vector table, sets the stack, zeroes `.bss` and calls
+  `kmain_arm64(boot_arg, magic)`.
 - The kernel uses PL011 at `0x09000000`, the generic counter and PSCI
   `SYSTEM_OFF`.
 - No Device Tree is parsed. The platform is hard-coded QEMU `virt`.
@@ -34,11 +35,15 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 256M -smp 1 \
 4. Allocates the kernel's physical range at its link address (`0x40080000`).
 5. Zeroes the allocation and copies the `PT_LOAD` segments.
 6. Flushes the instruction cache.
-7. Calls `ExitBootServices`.
-8. Disables interrupts and branches to the ELF entry point.
+7. Converts the UEFI memory map, captures ACPI/Device Tree pointers from the
+   configuration table and GOP framebuffer geometry, and fills `fboot_info`.
+8. Calls `ExitBootServices`.
+9. Disables interrupts and branches to the ELF entry point with the structure
+   in `x0` and `FINTE_BOOT_MAGIC` in `x1`.
 
 The loader uses `EFI_LOADER_CODE` for the kernel allocation, which is required
-for executable permissions under AAVMF.
+for executable permissions under AAVMF. AAVMF currently exposes ACPI but not a
+Device Tree table in the tested configuration; the protocol carries either.
 
 ### ISO and IMG
 
@@ -121,5 +126,6 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 
 - `make arm64-test`: QEMU `virt`, 147 core checks, PASS.
 - `make images`: arm64 IMG and ISO built.
-- Local AAVMF boot of both IMG and ISO reaches the 147 core checks.
+- Local AAVMF boot of both IMG and ISO prints boot protocol v1 with the memory
+  map and ACPI pointer and reaches the 147 core checks.
 - No interrupt, SMP, MMU or user-mode test yet.

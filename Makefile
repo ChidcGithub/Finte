@@ -44,7 +44,8 @@ CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c sr
             src/core/flow.c src/core/sched.c src/core/verb.c src/core/compat_linux.c \
             src/core/demo.c src/core/guest_linux.c src/core/selftest.c src/core/initrd.c \
             src/core/disk.c src/core/lfc1.c src/core/ext4.c src/core/ntfs.c src/core/file.c \
-            src/core/lock.c src/core/cas.c src/core/ansi.c src/core/watchdog.c
+            src/core/lock.c src/core/cas.c src/core/ansi.c src/core/watchdog.c \
+            src/core/bootinfo.c
 HOST_SRC := $(CORE_SRC) src/host/hal_host.c src/host/blk_host.c src/host/main.c src/host/bench.c src/tests/test_main.c
 
 KERNEL_SRC := $(CORE_SRC) src/arch/x86_64/kmain.c src/arch/x86_64/hal_x86.c \

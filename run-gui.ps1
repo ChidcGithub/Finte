@@ -142,7 +142,7 @@ if ($accelName -eq "whpx") {
 }
 $common += @("-k", "en-us")
 if ($UsbKeyboard -and $Mode -eq "uefi") {
-    $common += @("-device", "qemu-xhci", "-device", "usb-kbd")
+    Write-Warning "UEFI exits boot services; USB keyboard input needs a native HID driver. Using PS/2."
 }
 if ($FullScreen) {
     $common += "-full-screen"

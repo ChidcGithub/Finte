@@ -25,6 +25,10 @@ and uses cached free pages first. `hal_pages_free()` returns pages to the cache
 when they are inside the heap range. There is no NUMA awareness, no physical
 page database, no reclaim and no swap.
 
+Boot Protocol v1 passes an E820/UEFI memory map, but the current allocator does
+not consume it yet. It remains informational until the Phase 1 physical page
+manager.
+
 The kernel image is linked at 64 MiB on x86_64 and at `0x40080000` on arm64.
 The x86_64 boot path identity-maps the first 1 GiB with 2 MiB pages.
 

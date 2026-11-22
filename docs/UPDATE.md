@@ -2,6 +2,15 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-22 — Boot Protocol v1
+- One validated `fboot_info` structure for x86 BIOS, x86 UEFI and arm64 UEFI.
+- BIOS E820 memory map and ramdisk module; UEFI memory map, ACPI/DTB, modules
+  and GOP framebuffer.
+- Both UEFI loaders call `ExitBootServices`; the kernel no longer uses firmware
+  Block I/O, ConIn or the firmware IDT.
+- Host boot-protocol validation test; suite is now 21 tests.
+- x86 UEFI input is serial/PS/2; USB HID needs a native driver.
+
 ## 2026-11-22 — first-stage Flow/Thread split
 - Added `fthread_t`; each Flow owns one primary Thread.
 - Scheduler queues, sleep/throttle lists, channel wait lists and migration now

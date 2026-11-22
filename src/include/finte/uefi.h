@@ -201,6 +201,11 @@ typedef struct {
 } EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 typedef struct {
+    EFI_GUID VendorGuid;
+    void *VendorTable;
+} EFI_CONFIGURATION_TABLE;
+
+typedef struct {
     EFI_TABLE_HEADER Hdr;
     CHAR16 *FirmwareVendor;
     uint32_t FirmwareRevision;
@@ -214,7 +219,7 @@ typedef struct {
     void *RuntimeServices;
     EFI_BOOT_SERVICES *BootServices;
     UINTN NumberOfTableEntries;
-    void *ConfigurationTable;
+    EFI_CONFIGURATION_TABLE *ConfigurationTable;
 } EFI_SYSTEM_TABLE;
 
 /* UEFI loaded-image protocol (DeviceHandle is the handle we need). */

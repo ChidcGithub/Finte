@@ -30,9 +30,9 @@
   when available and a periodic fallback.
 - The timer IRQ increments per-CPU ticks, services sleepers and may preempt
   the running Flow.
-- `hal_fw_begin()` / `hal_fw_end()` temporarily switch to the firmware IDT so
-  UEFI Boot Services calls can run. This exists because the x86 UEFI loader
-  does not call `ExitBootServices`.
+- `hal_fw_begin()` / `hal_fw_end()` can temporarily switch to the firmware IDT
+  for a producer that keeps `fw_services`. Current UEFI loaders call
+  `ExitBootServices`, so this path is inactive at runtime.
 
 ### IPIs
 

@@ -147,9 +147,11 @@ static void timestamp_prefix(void)
 void hal_boot_info(const fboot_info_t *bi)
 {
     g_boot = bi;
-    g_uefi = bi && bi->magic == FINTE_BOOT_MAGIC && bi->console_type == 2;
-    g_fw_idt_base = g_uefi ? bi->fw_idt_base : 0;
-    g_fw_idt_limit = g_uefi ? bi->fw_idt_limit : 0;
+    g_uefi = bi && bi->magic == FINTE_BOOT_MAGIC &&
+             bi->console_type == FINTE_BOOT_CONSOLE_UEFI;
+    int fw = g_uefi && bi->fw_services;
+    g_fw_idt_base = fw ? bi->fw_idt_base : 0;
+    g_fw_idt_limit = fw ? bi->fw_idt_limit : 0;
 }
 
 int hal_fw_begin(void)

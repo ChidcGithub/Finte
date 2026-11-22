@@ -62,16 +62,17 @@ and receiving resources through capabilities.
 | --- | --- | --- |
 | Scheduler, memory, caps, Channels, Arenas | Level 0 | In-kernel |
 | x86_64 ATA/AHCI block drivers | Level 0 | In-kernel |
-| UEFI firmware Block I/O and ConIn | Level 0/1 | Used through firmware pointers |
+| UEFI firmware Block I/O and ConIn | Not used by current loaders | Only available when a producer sets `fw_services` |
 | Disk manager and lfc1/ext4/NTFS | Level 0 | In-kernel |
 | Shell | Level 0 | In-kernel shell |
 | `init.elf` and `ipc.elf` | Level 2 | x86 ring-3 demo processes |
 | Linux persona | Level 0 | In-kernel translation layer |
 | arm64 drivers/services | Level 0 | No user mode yet |
 
-The current x86_64 kernel also relies on UEFI firmware services after handoff.
-That is a deliberate transitional choice, not the target contract. See
-[Boot protocol](boot-protocol.md).
+The current x86_64 and arm64 UEFI loaders call `ExitBootServices` and clear
+the firmware pointers. The kernel no longer relies on UEFI Block I/O or ConIn.
+Firmware-service support remains in the code path only for a producer that
+advertises `fw_services`. See [Boot protocol](boot-protocol.md).
 
 ## 3. Cross-boundary operations
 
@@ -159,7 +160,8 @@ services, not the interrupt controller, timer or boot console.
 
 - All drivers and filesystems are in the kernel.
 - The shell is in the kernel.
-- x86 UEFI keeps firmware services available after handoff.
+- x86 UEFI has no native USB-HID keyboard driver; USB-only systems need one
+  for a non-serial console.
 - arm64 has no user mode or user/kernel boundary.
 - There is no user-space driver framework or device manager.
 - The native syscall ABI is not stable.

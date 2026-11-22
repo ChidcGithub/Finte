@@ -272,10 +272,10 @@ Sleeping Threads use `hal_now_ns`. The timer IRQ calls `finte_sched_tick()`,
 which expires sleepers even while a CPU-bound Thread never yields; this is what
 lets a sleeping task preempt a user spinner. The scheduler loop still checks
 the earliest wake time when the CPU is idle. User processes can run on APs; the
-per-CPU TSS/GDT binds the user stack on each switch. Firmware calls temporarily
-switch to the firmware IDT with interrupts enabled, then restore the caller's
-IDT and RFLAGS. The BSP's LAPIC timer state is left to OVMF so firmware ConIn
-and Block I/O keep working after APs are online.
+per-CPU TSS/GDT binds the user stack on each switch. The UEFI loaders exit boot
+services, so the runtime uses native AHCI and PS/2/serial input. The
+firmware-IDT switch path remains in the kernel only for a producer that sets
+`fw_services`; current loaders clear it.
 
 Statistics are kept globally and per flow: syscalls, context switches, messages, caps installed/dropped/denied, fuel burned, epochs, deadlocks.
 
@@ -363,16 +363,18 @@ Finte does not use GRUB. One hybrid raw image contains two independent boot path
    - reads the image header at LBA 33
    - loads the kernel to `0x10000` and the ramdisk to `0x40000`
    - copies the kernel to **64 MiB**
+   - probes E820 into a boot memory map
    - builds PML4 → PDPT → PD, identity mapping 1 GiB with **8-byte** 2 MiB entries
    - enables PAE, EFER.LME, CR0.PG, far-jumps to `0x4000000`
-   - passes `fboot_info*` in RDI and `0xF17E0001` in RSI
+   - passes boot protocol v1 `fboot_info*` in RDI and `0xF17E0001` in RSI
 3. **UEFI path** (`src/uefi/loader.c`)
    - PE32+ EFI application on a FAT32 EFI System Partition
    - opens `EFI/FINTE/KERNEL.BIN` and `RAMDISK.BIN` via the firmware file protocol
    - allocates 36 MiB for code+bss+heap at 64 MiB
-   - fills `fboot_info` with the ramdisk, UEFI table pointers, GOP framebuffer,
-     the firmware IDT descriptor, and the firmware Block I/O device list
-   - jumps to the flat kernel; it does **not** call `ExitBootServices`
+   - fills v1 `fboot_info` with the UEFI memory map, ACPI pointer, ramdisk
+     module, GOP framebuffer and kernel range
+   - calls `ExitBootServices` and clears the firmware pointers/Block I/O/ConIn
+   - jumps to the flat kernel; no firmware services are used afterward
 
 ### Kernel
 
@@ -448,14 +450,14 @@ never wraps on an 80-column console. The host exposes the same suite as
 The disk manager is a thin layer over block devices and filesystems:
 
 - **Block HAL**: `hal_blk_count/info/read/write`; BIOS uses ATA PIO, UEFI uses
-  AHCI DMA plus firmware Block I/O for NVMe/USB storage, and the host simulator
-  can attach raw image files. Firmware devices whose capacity duplicates a
-  native disk are filtered out so `hd0`/`hd1` stay stable on OVMF. The core
-  never touches controller registers.
+  AHCI DMA, and the host simulator can attach raw image files. Firmware Block
+  I/O support remains only for a producer that sets `fw_services`; current
+  loaders exit boot services and disable it. The core never touches controller
+  registers.
 - **Firmware calls**: `hal_fw_begin()` / `hal_fw_end()` save RFLAGS, disable
   interrupts, switch to the firmware IDT, enable interrupts, then restore the
-  kernel IDT and the caller's flag state. OVMF's timer and device interrupts run
-  while the firmware owns the CPU; the kernel's own timer resumes afterwards.
+  kernel IDT and the caller's flag state. This path is unused when the loader
+  clears `fw_services`.
 - **Partitions**: MBR primary/extended entries and GPT headers are parsed at
   mount time. A device with no table is exposed as a whole-disk partition.
 - **Mounts**: `mount hd1p2 /mnt` stores a filesystem instance and a target

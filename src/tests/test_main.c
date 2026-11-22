@@ -1,5 +1,6 @@
 #include "finte/finte.h"
 #include "finte/ansi.h"
+#include "finte/boot.h"
 #include "finte/demo.h"
 #include "finte/guest.h"
 
@@ -730,6 +731,47 @@ static void test_status_text(void)
     CHECK(finte_strcmp(finte_disk_error(-99), "disk error") == 0);
 }
 
+static void test_boot_protocol(void)
+{
+    fboot_info_t bi;
+    finte_memset(&bi, 0, sizeof(bi));
+    bi.magic = FINTE_BOOT_MAGIC;
+    bi.version = FINTE_BOOT_VERSION;
+    bi.header_size = FINTE_BOOT_INFO_BYTES;
+    bi.total_size = FINTE_BOOT_INFO_BYTES;
+    bi.arch = FINTE_BOOT_ARCH_X86_64;
+    bi.platform = FINTE_BOOT_PLATFORM_BIOS;
+    bi.console_type = FINTE_BOOT_CONSOLE_VGA;
+    bi.kernel_base = 0x4000000;
+    bi.kernel_size = 4096;
+    CHECK(finte_boot_validate(&bi, FINTE_BOOT_ARCH_X86_64) == FINTE_BOOT_OK);
+
+    bi.version = 99;
+    CHECK(finte_boot_validate(&bi, FINTE_BOOT_ARCH_X86_64) ==
+          FINTE_BOOT_ERR_VERSION);
+    bi.version = FINTE_BOOT_VERSION;
+    bi.magic = 0;
+    CHECK(finte_boot_validate(&bi, FINTE_BOOT_ARCH_X86_64) ==
+          FINTE_BOOT_ERR_MAGIC);
+    bi.magic = FINTE_BOOT_MAGIC;
+
+    fboot_mmap_entry_t map[1];
+    map[0].base = 0x100000;
+    map[0].length = 0x1000;
+    map[0].type = FINTE_BOOT_MMAP_USABLE;
+    map[0].flags = 0;
+    bi.flags = FINTE_BOOT_FLAG_MEMMAP;
+    bi.memmap_addr = (uint64_t)(uintptr_t)map;
+    bi.memmap_count = 1;
+    bi.memmap_desc_size = sizeof(map[0]);
+    CHECK(finte_boot_validate(&bi, FINTE_BOOT_ARCH_X86_64) == FINTE_BOOT_OK);
+    CHECK(finte_boot_mmap_usable(&bi, 0x100000, 0x1000) == 1);
+    CHECK(finte_boot_mmap_usable(&bi, 0x101000, 0x1000) == 0);
+    map[0].length = 0;
+    CHECK(finte_boot_validate(&bi, FINTE_BOOT_ARCH_X86_64) ==
+          FINTE_BOOT_ERR_MEMMAP);
+}
+
 static void test_format(void)
 {
     char buf[128];
@@ -768,6 +810,7 @@ static const struct testcase g_tests[] = {
     { "native demo", test_demo },
     { "ANSI SGR parser", test_ansi },
     { "status text", test_status_text },
+    { "boot protocol", test_boot_protocol },
     { "formatter", test_format },
 };
 

@@ -51,7 +51,7 @@ make initrd         # build/initrd.bin
 make image          # build/finte.img (BIOS + UEFI USB image)
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
-make test           # 20 extended self-tests (host)
+make test           # 21 extended self-tests (host)
 make selfcheck      # startup POST/self-check suite (host)
 make demo           # host-side native pipeline
 make compat         # host-side Linux persona
@@ -124,9 +124,14 @@ LBA 2048..   EFI System Partition (FAT32)
   64 MiB, builds a 1 GiB identity map with 2 MiB pages, and enters long mode.
 - UEFI loader is a PE32+ application built with `clang` and `lld-link`. It reads
   the FAT32 ESP with `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, allocates a 36 MiB
-  kernel region at 64 MiB, fills `fboot_info`, reads the ramdisk, and jumps to
-  the flat kernel. It also obtains GOP framebuffer information, the firmware IDT
-  descriptor, and the firmware Block I/O device list.
+  kernel region at 64 MiB, reads the ramdisk, and fills `fboot_info` v1 with the
+  UEFI memory map, ACPI pointer, ramdisk module and GOP framebuffer. It calls
+  `ExitBootServices` and clears the firmware pointers.
+- The x86 UEFI kernel uses native AHCI for SATA and PS/2/serial input after
+  handoff. Firmware Block I/O and ConIn are no longer used by the current
+  loader.
+- The arm64 UEFI loader produces the same structure, passes it in `x0` with
+  `FINTE_BOOT_MAGIC` in `x1`, and calls `ExitBootServices`.
 - The ramdisk contains `init.elf` and `ipc.elf` (the isolated ring-3 processes)
 in addition to the text
   files packed from `src/ramdisk/`.
@@ -149,8 +154,8 @@ build/finte-arm64.iso    El Torito EFI FAT16 ESP
   the ELF `PT_LOAD` segments, exits boot services and jumps to the entry point.
   It requires UEFI firmware (QEMU `virt` + AAVMF).
 - The kernel uses its own VGA text console on BIOS and the GOP framebuffer on
-  UEFI; serial is mirrored on COM1. Storage and input may call firmware services
-  through the saved IDT; console output never does.
+  UEFI; serial is mirrored on COM1. Storage uses native ATA/AHCI and input uses
+  PS/2/serial; the firmware-service path is inactive for current loaders.
 
 ## GUI
 
@@ -175,7 +180,8 @@ The launcher rebuilds `build/finte.img`, stages it and OVMF under
 `%LOCALAPPDATA%\FinteGUI` because QEMU for Windows cannot reliably open the
 project path (it contains spaces and Chinese characters), and opens a QEMU
 window. Click once inside the window to capture keyboard focus; the shell
-accepts PS/2, UEFI ConIn (USB HID), and serial input. `PageUp`/`PageDown`,
+accepts PS/2 and serial input. Firmware ConIn is disabled by the current UEFI
+loader, so USB-only keyboards need a native HID driver. `PageUp`/`PageDown`,
 `Shift+Up/Down`, `Home`/`End` and the mouse wheel scroll the last 512 console
 lines; typing returns to the prompt. `shutdown` exits QEMU.
 WHPX is used automatically when available; install/enable **Windows Hypervisor
@@ -183,8 +189,9 @@ Platform** for hardware acceleration, otherwise the launcher falls back to TCG.
 WHPX launches use the **SDL** frontend (GTK can stall before guest start on some
 WHPX setups); TCG uses GTK. The launcher switches the SDL window to the US
 keyboard layout so the Windows IME cannot consume letter keys. Direct PS/2 is
-the default for low typing latency; `-UsbKeyboard` opts into a virtual USB
-keyboard through UEFI ConIn. QEMU diagnostics go to
+the default for low typing latency. The `-UsbKeyboard` switch is retained for
+future native HID support but cannot reach the current post-`ExitBootServices`
+kernel; use PS/2 or serial. QEMU diagnostics go to
 `%LOCALAPPDATA%\FinteGUI\qemu.log`, so benign firmware and WHPX warnings do not
 clutter the console.
 
@@ -233,21 +240,10 @@ The QEMU targets attach `build/disk-test.img` as the second IDE/SATA disk and
 mount `hd1p1` (lfc1), `hd1p2` (ext4) and `hd1p3` (NTFS) in turn. The lfc1
 partition is writable; `write`, `mkdir`, `cp` and `sync` are exercised there.
 
-Writable lfc1 and the UEFI firmware path can also be tested with an NVMe image:
-
-```bash
-python3 tools/mklfc1.py --source build/lfc-src --out build/nvme-test.img \
-  --label NVME_LFC1 --size 50331648
-qemu-system-x86_64 -m 256M -machine q35 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-  -drive if=pflash,format=raw,file=build/OVMF_VARS_4M.fd \
-  -drive format=raw,file=build/finte.img,if=ide,index=0,media=disk \
-  -drive format=raw,file=build/nvme-test.img,if=none,id=nvme0 \
-  -device nvme,drive=nvme0,serial=finte0
-```
-
-The NVMe disk appears as `hd1`; firmware Block I/O is slow (about 2 seconds per
-operation under QEMU), so allow time for `mount`, `sync` and `umount`.
+Writable lfc1 is covered by the AHCI test (`make qemu-uefi-disk-test`). The
+current x86 UEFI loader exits boot services and has no native NVMe driver, so
+firmware Block I/O no longer exposes NVMe/USB disks. Those paths return when
+native drivers land.
 
 ## Startup checks
 
@@ -281,10 +277,9 @@ status through ConOut before handoff.
 **Keyboard does not respond**  
 Click once inside the QEMU window to capture keyboard focus. If it still does
 not respond, rebuild the image (`run-gui.ps1` does this automatically); an older
-image could starve the PS/2 path when no serial backend exists. Under UEFI the
-loader records whether the firmware ConIn handle is USB: USB keyboards use
-ConIn, PS/2-only systems use direct i8042 polling, and serial is always polled
-first. BIOS builds use PS/2 and serial.
+image could starve the PS/2 path when no serial backend exists. Both UEFI
+loaders exit boot services, so firmware ConIn is unavailable. The runtime uses
+direct i8042/PS/2 polling and serial; BIOS builds also use PS/2 and serial.
 
 **`qemu: Failed to get "write" lock`**  
 Another QEMU instance still has `build/finte.img` open. Close it; do not run the
@@ -303,9 +298,10 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 
 ## Test matrix
 
-- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 20 host tests, BIOS CLI boot
-  test, kernel POST, USB mass-storage boot, VGA screenshot, PS/2 keyboard,
-  timer preemption (`preempt=OK`), ring-3 `user`/`procs`, 4-CPU SMP boot.
+- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 21 host tests, BIOS CLI boot
+  test, boot protocol v1 with E820 and ramdisk module, kernel POST, USB
+  mass-storage boot, VGA screenshot, PS/2 keyboard, timer preemption
+  (`preempt=OK`), ring-3 `user`/`procs`, 4-CPU SMP boot.
 - 4-CPU scheduler: `selfcheck` 147/147, `demo`, `preempt`, `compat`, `smp`,
   `procs`; AP LAPIC ticks and context switches advance.
 - 3-strike watchdog: `watchdog test` ×3 prints a panic and powers off;
@@ -316,17 +312,18 @@ A Windows process is holding the directory. Close QEMU/editors or remove
   `lfc1ck.py` validation and `--compact`.
 - BIOS disk manager: ATA PIO, MBR, mount/read/fsinfo/umount for lfc1, ext4 and
   NTFS from `hd1`; writable lfc1.
-- WSL Ubuntu 26.04 / OVMF 2025.11: UEFI CLI boot test, USB mass-storage boot,
-  GOP 1280x800 framebuffer, USB HID and PS/2 input, timer preemption, ring-3
+- WSL Ubuntu 26.04 / OVMF 2025.11: UEFI CLI boot test, boot protocol v1 with
+  UEFI memory map/ACPI/ramdisk module, `fw=0` after `ExitBootServices`, GOP
+  1280x800 framebuffer, PS/2 and serial input, timer preemption, ring-3
   `user`/`procs`, 4-CPU SMP, screenshot.
 - UEFI disk manager: AHCI, MBR, mount/read/fsinfo/umount for lfc1, ext4 and
   NTFS from `hd1`; writable lfc1.
-- UEFI firmware paths: NVMe and USB mass-storage Block I/O read/write/sync/
-  remount; USB HID ConIn with no duplicate keys.
-- Windows 11 QEMU GTK GUI: UEFI boot, 1280x800 window, shell screenshot.
+- arm64 AAVMF: boot protocol v1, memory map/ACPI, 147 core checks, ISO and IMG
+  boot.
+- Windows 11 QEMU GTK GUI: UEFI boot, 1280x800 window, PS/2/serial shell.
 - Windows 11 QEMU + WHPX: 4-CPU boot, UEFI disk write/read, real keyboard
   input, `preempt` ~135 ms (vs ~397 ms TCG).
-- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 20 tests,
+- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 21 tests,
   self-check, demo, compat, benchmark.
 
 Physical laptop validation is still pending; the image is built for both BIOS

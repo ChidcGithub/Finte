@@ -24,6 +24,58 @@ static const EFI_GUID simple_input_guid = {
 static const EFI_GUID device_path_guid = {
     0x09576E91, 0x6D3F, 0x11D2, {0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B}
 };
+static const EFI_GUID acpi20_guid = {
+    0x8868E871, 0xE4F1, 0x11D3, {0xBC, 0x22, 0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81}
+};
+static const EFI_GUID acpi10_guid = {
+    0xEB9D2D30, 0x2D88, 0x11D3, {0x9A, 0x16, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D}
+};
+
+static uint8_t uefi_memory_map[64 * 1024] __attribute__((aligned(8)));
+static fboot_mmap_entry_t boot_mmap[FINTE_BOOT_MMAP_MAX];
+static fboot_module_t boot_modules[FINTE_BOOT_MODULE_MAX];
+static UINTN g_map_key;
+
+static int guid_eq(const EFI_GUID *a, const EFI_GUID *b)
+{
+    return a->Data1 == b->Data1 && a->Data2 == b->Data2 &&
+           a->Data3 == b->Data3 &&
+           a->Data4[0] == b->Data4[0] && a->Data4[1] == b->Data4[1] &&
+           a->Data4[2] == b->Data4[2] && a->Data4[3] == b->Data4[3] &&
+           a->Data4[4] == b->Data4[4] && a->Data4[5] == b->Data4[5] &&
+           a->Data4[6] == b->Data4[6] && a->Data4[7] == b->Data4[7];
+}
+
+static void *find_config_table(EFI_SYSTEM_TABLE *st, const EFI_GUID *guid)
+{
+    if (!st || !st->ConfigurationTable) {
+        return NULL;
+    }
+    for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
+        if (guid_eq(&st->ConfigurationTable[i].VendorGuid, guid)) {
+            return st->ConfigurationTable[i].VendorTable;
+        }
+    }
+    return NULL;
+}
+
+static uint32_t map_uefi_memory_type(uint32_t type)
+{
+    switch (type) {
+    case 7:  /* conventional */
+    case 1:  /* loader code */
+    case 2:  /* loader data */
+    case 3:  /* boot services code */
+    case 4:  /* boot services data */
+        return FINTE_BOOT_MMAP_USABLE;
+    case 9:  /* ACPI reclaim */
+        return FINTE_BOOT_MMAP_ACPI_RECLAIM;
+    case 10: /* ACPI NVS */
+        return FINTE_BOOT_MMAP_ACPI_NVS;
+    default:
+        return FINTE_BOOT_MMAP_RESERVED;
+    }
+}
 
 extern void uefi_jump_to_kernel(uint64_t boot_info, uint64_t magic,
                                 uint64_t entry);
@@ -180,7 +232,8 @@ static int handle_is_usb_keyboard(EFI_SYSTEM_TABLE *st, EFI_HANDLE handle)
 
 static void fill_boot_info(fboot_info_t *bi, EFI_SYSTEM_TABLE *st,
                            uint64_t kernel_size, uint64_t ramdisk_addr,
-                           uint64_t ramdisk_size)
+                           uint64_t ramdisk_size,
+                           EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
 {
     memset(bi, 0, sizeof(*bi));
     bi->magic = FINTE_BOOT_MAGIC;
@@ -188,15 +241,43 @@ static void fill_boot_info(fboot_info_t *bi, EFI_SYSTEM_TABLE *st,
     bi->kernel_size = (uint32_t)kernel_size;
     bi->ramdisk_addr = (uint32_t)ramdisk_addr;
     bi->ramdisk_size = (uint32_t)ramdisk_size;
-    bi->version = 1;
-    bi->console_type = 2;
+    bi->version = FINTE_BOOT_VERSION;
+    bi->console_type = FINTE_BOOT_CONSOLE_UEFI;
     bi->reserved = 0;
+    bi->header_size = FINTE_BOOT_INFO_BYTES;
+    bi->total_size = FINTE_BOOT_INFO_BYTES;
+    bi->arch = FINTE_BOOT_ARCH_X86_64;
+    bi->platform = FINTE_BOOT_PLATFORM_UEFI;
+    bi->flags = FINTE_BOOT_FLAG_FW_SERVICES;
+    bi->fw_services = 1;
+    bi->kernel_base = KERNEL_BASE;
+    bi->memmap_count = 0;
+    bi->memmap_desc_size = sizeof(fboot_mmap_entry_t);
+    bi->module_count = 0;
+    bi->module_desc_size = sizeof(fboot_module_t);
     bi->efi_system_table = (uint64_t)(uintptr_t)st;
     bi->efi_con_in = (uint64_t)(uintptr_t)st->ConIn;
     bi->efi_con_out = (uint64_t)(uintptr_t)st->ConOut;
     bi->reserved2 = 0;
     bi->blk_count = 0;
     bi->input_usb = 0;
+
+    if (ramdisk_addr && ramdisk_size) {
+        memset(&boot_modules[0], 0, sizeof(boot_modules[0]));
+        boot_modules[0].addr = ramdisk_addr;
+        boot_modules[0].size = ramdisk_size;
+        boot_modules[0].type = FINTE_BOOT_MODULE_RAMDISK;
+        boot_modules[0].name[0] = 'r';
+        boot_modules[0].name[1] = 'a';
+        boot_modules[0].name[2] = 'm';
+        boot_modules[0].name[3] = 'd';
+        boot_modules[0].name[4] = 'i';
+        boot_modules[0].name[5] = 's';
+        boot_modules[0].name[6] = 'k';
+        bi->modules_addr = (uint64_t)(uintptr_t)boot_modules;
+        bi->module_count = 1;
+        bi->flags |= FINTE_BOOT_FLAG_MODULES;
+    }
 
     EFI_HANDLE *in_handles = NULL;
     UINTN in_count = 0;
@@ -259,6 +340,66 @@ static void fill_boot_info(fboot_info_t *bi, EFI_SYSTEM_TABLE *st,
     serial_puts("UEFI: block devices ");
     serial_hex(bi->blk_count);
     serial_puts("\r\n");
+
+    UINTN map_size = sizeof(uefi_memory_map);
+    UINTN map_key = 0;
+    UINTN desc_size = 0;
+    uint32_t desc_version = 0;
+    EFI_STATUS ms = st->BootServices->GetMemoryMap(
+        &map_size, (EFI_MEMORY_DESCRIPTOR *)uefi_memory_map, &map_key,
+        &desc_size, &desc_version);
+    g_map_key = map_key;
+    serial_puts("UEFI: memory map ");
+    serial_hex((uint64_t)ms);
+    serial_puts(" size ");
+    serial_hex(map_size);
+    serial_puts("\r\n");
+    if (efi_ok(ms) && desc_size >= sizeof(EFI_MEMORY_DESCRIPTOR)) {
+        uint32_t n = 0;
+        for (UINTN off = 0;
+             off + desc_size <= map_size && n < FINTE_BOOT_MMAP_MAX;
+             off += desc_size) {
+            EFI_MEMORY_DESCRIPTOR *d =
+                (EFI_MEMORY_DESCRIPTOR *)(uefi_memory_map + off);
+            if (d->NumberOfPages == 0) {
+                continue;
+            }
+            boot_mmap[n].base = d->PhysicalStart;
+            boot_mmap[n].length = d->NumberOfPages * 4096ull;
+            boot_mmap[n].type = map_uefi_memory_type(d->Type);
+            boot_mmap[n].flags = 0;
+            n++;
+        }
+        bi->memmap_addr = (uint64_t)(uintptr_t)boot_mmap;
+        bi->memmap_count = n;
+        bi->memmap_desc_size = sizeof(fboot_mmap_entry_t);
+        if (n) {
+            bi->flags |= FINTE_BOOT_FLAG_MEMMAP;
+        }
+    }
+
+    void *acpi = find_config_table(st, &acpi20_guid);
+    if (!acpi) {
+        acpi = find_config_table(st, &acpi10_guid);
+    }
+    if (acpi) {
+        bi->acpi_addr = (uint64_t)(uintptr_t)acpi;
+        bi->flags |= FINTE_BOOT_FLAG_ACPI;
+    }
+
+    if (gop && gop->Mode && gop->Mode->Info) {
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = gop->Mode->Info;
+        if ((info->PixelFormat == 0 || info->PixelFormat == 1) &&
+            gop->Mode->FrameBufferBase && info->PixelsPerScanLine) {
+            bi->fb_addr = gop->Mode->FrameBufferBase;
+            bi->fb_pitch = info->PixelsPerScanLine * 4;
+            bi->fb_width = info->HorizontalResolution;
+            bi->fb_height = info->VerticalResolution;
+            bi->fb_bpp = 32;
+            bi->fb_format = info->PixelFormat;
+            bi->flags |= FINTE_BOOT_FLAG_FRAMEBUFFER;
+        }
+    }
 }
 
 EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
@@ -343,7 +484,6 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
         fail(st, "boot info allocation failed");
     }
     fboot_info_t *bi = (fboot_info_t *)(uintptr_t)biaddr;
-    fill_boot_info(bi, st, ksize, raddr, rsize);
 
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
     s = st->BootServices->LocateProtocol((EFI_GUID *)&gop_guid, NULL,
@@ -362,19 +502,32 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
         serial_puts(" fb ");
         serial_hex(gop->Mode->FrameBufferBase);
         serial_puts("\r\n");
-        if ((info->PixelFormat == 0 || info->PixelFormat == 1) &&
-            gop->Mode->FrameBufferBase != 0 && info->PixelsPerScanLine) {
-            bi->fb_addr = gop->Mode->FrameBufferBase;
-            bi->fb_pitch = info->PixelsPerScanLine * 4;
-            bi->fb_width = info->HorizontalResolution;
-            bi->fb_height = info->VerticalResolution;
-            bi->fb_bpp = 32;
-            bi->fb_format = info->PixelFormat;
-        }
     }
 
-    serial_puts("UEFI: jumping to kernel\r\n");
     conout(st, "Booting Finte kernel...\r\n");
+    for (int attempt = 0; attempt < 4; attempt++) {
+        fill_boot_info(bi, st, ksize, raddr, rsize, gop);
+        s = st->BootServices->ExitBootServices(image, g_map_key);
+        if (efi_ok(s)) {
+            break;
+        }
+    }
+    if (!efi_ok(s)) {
+        fail(st, "ExitBootServices failed");
+    }
+
+    /* Boot Services are gone; only serial I/O and the framebuffer remain. */
+    bi->fw_services = 0;
+    bi->flags &= ~FINTE_BOOT_FLAG_FW_SERVICES;
+    bi->efi_system_table = 0;
+    bi->efi_con_in = 0;
+    bi->efi_con_out = 0;
+    bi->fw_idt_base = 0;
+    bi->fw_idt_limit = 0;
+    bi->blk_count = 0;
+    bi->input_usb = 0;
+
+    serial_puts("UEFI: jumping to kernel\r\n");
     uefi_jump_to_kernel((uint64_t)(uintptr_t)bi, FINTE_BOOT_MAGIC,
                         KERNEL_BASE);
     fail(st, "kernel returned");

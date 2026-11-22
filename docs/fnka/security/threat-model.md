@@ -80,7 +80,7 @@
 | --- | --- | --- |
 | Tampered kernel or ramdisk | Boot image is self-contained | No signature verification |
 | Malicious boot info | Magic/version check; some range checks | No memory-map/pointer ownership validation |
-| Firmware services compromised | x86 uses firmware Block I/O/ConIn | No native replacement; firmware TCB |
+| Firmware services compromised | Loaders exit Boot Services; no runtime firmware calls | Boot-time firmware remains in the TCB; unsigned loaders |
 | Unsigned UEFI loader | Documented Secure Boot limitation | No signing path |
 | Physical boot tampering | None | No measured boot or TPM integration |
 

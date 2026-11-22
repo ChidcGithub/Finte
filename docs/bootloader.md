@@ -44,17 +44,17 @@ text + COM1.
 - The loader opens the ESP with `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, reads the
   kernel and ramdisk, and allocates 36 MiB for kernel code + `.bss` + heap at
   **64 MiB**.
-- It obtains GOP framebuffer geometry, fills `fboot_info`, and jumps to the flat
-  kernel (`RDI=boot_info`, `RSI=0xF17E0001`).
-- It does **not** call `ExitBootServices`; the kernel does not call firmware
-  services afterward. Output uses the GOP linear framebuffer + COM1, input uses
-  PS/2 + COM1.
-- This avoids a UEFI ConOut dependency after handoff (tested ConOut calls can
-  block once interrupts are disabled).
+- It obtains GOP framebuffer geometry, converts the UEFI memory map, captures
+  the ACPI table pointer, describes the ramdisk as module 0, fills
+  `fboot_info` v1, and calls `ExitBootServices`.
+- It clears the firmware pointers, Block I/O and ConIn fields, then jumps to
+  the flat kernel (`RDI=boot_info`, `RSI=0xF17E0001`).
+- Output uses the GOP linear framebuffer + COM1, input uses PS/2 + COM1. There
+  is no firmware ConOut/ConIn dependency after handoff. A USB-only keyboard
+  needs a future native HID driver.
 
-Verified in QEMU/OVMF from a QEMU USB mass-storage device and in the Windows
-QEMU GTK GUI: 1280x800 GOP framebuffer, shell via serial and PS/2 keyboard,
-screenshots checked.
+Verified in QEMU/OVMF: boot protocol v1, `fw=0`, GOP framebuffer, shell via
+serial and PS/2, and AHCI disk access after `ExitBootServices`.
 
 ## ISO and arm64 media
 
@@ -108,8 +108,7 @@ make qemu-test    # BIOS CLI test
 make qemu-uefi-test
 ```
 
-Physical hardware is not yet validated; QEMU SeaBIOS, QEMU/OVMF, USB
-mass-storage boot, NVMe firmware Block I/O, USB HID ConIn, PS/2 keyboard input,
-timer preemption, ring-3 entry and the framebuffer screenshot are the current
-verification. Under UEFI, USB-HID keyboards work through firmware ConIn; BIOS
-uses PS/2 and serial.
+Physical hardware is not yet validated. QEMU SeaBIOS, QEMU/OVMF, BIOS E820,
+UEFI memory map/ACPI, PS/2 and serial input, timer preemption, ring-3 entry,
+AHCI after `ExitBootServices` and arm64 AAVMF boot are the current
+verification. USB-HID input still needs a native driver.

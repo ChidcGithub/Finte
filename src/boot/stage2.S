@@ -9,6 +9,23 @@
 
 .equ HEADER_ADDR, 0x6000
 .equ BOOTINFO_ADDR, 0x5000
+.equ MODULE_ADDR, 0x5700
+.equ MEMMAP_ADDR, 0x5800
+.equ BOOTINFO_BYTES, 568
+.equ BOOT_HEADER_SIZE, 448
+.equ BOOT_TOTAL_SIZE, 452
+.equ BOOT_ARCH, 456
+.equ BOOT_PLATFORM, 460
+.equ BOOT_FLAGS, 464
+.equ BOOT_MMAP_COUNT, 468
+.equ BOOT_MMAP_DESC, 472
+.equ BOOT_MODULE_COUNT, 476
+.equ BOOT_MODULE_DESC, 480
+.equ BOOT_MODULES_ADDR, 512
+.equ BOOT_MMAP_ADDR, 504
+.equ BOOT_KERNEL_BASE, 496
+.equ BOOT_FLAG_MEMMAP, 1
+.equ BOOT_FLAG_MODULES, 16
 .equ KERNEL_LOAD, 0x10000
 .equ RAMDISK_LOAD, 0x40000
 .equ KERNEL_DEST, 0x4000000
@@ -17,6 +34,7 @@
 .globl _start
 _start:
     cli
+    cld
     mov al, '2'
     xor ax, ax
     mov ds, ax
@@ -97,9 +115,11 @@ no_ramdisk:
     mov al, 'R'
 
     /* Boot information consumed by the kernel at 0x5000. */
+    xor ax, ax
+    mov es, ax
     mov edi, BOOTINFO_ADDR
     xor eax, eax
-    mov ecx, 128
+    mov ecx, 512
     rep stosd
 
     mov dword ptr [BOOTINFO_ADDR + 0x00], 0xF17E0001
@@ -112,6 +132,33 @@ no_ramdisk:
     mov [BOOTINFO_ADDR + 0x10], eax
     mov dword ptr [BOOTINFO_ADDR + 0x14], 1
     mov dword ptr [BOOTINFO_ADDR + 0x18], 1  /* VGA text console */
+
+    /* v1 protocol metadata. */
+    mov dword ptr [BOOTINFO_ADDR + BOOT_HEADER_SIZE], BOOTINFO_BYTES
+    mov dword ptr [BOOTINFO_ADDR + BOOT_TOTAL_SIZE], BOOTINFO_BYTES
+    mov dword ptr [BOOTINFO_ADDR + BOOT_ARCH], 1       /* x86_64 */
+    mov dword ptr [BOOTINFO_ADDR + BOOT_PLATFORM], 1   /* BIOS */
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MMAP_DESC], 24
+    mov dword ptr [BOOTINFO_ADDR + BOOT_KERNEL_BASE], KERNEL_DEST
+    mov dword ptr [BOOTINFO_ADDR + BOOT_KERNEL_BASE + 4], 0
+
+    /* One ramdisk module descriptor at 0x5700. */
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MODULE_COUNT], 1
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MODULE_DESC], 40
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MODULES_ADDR], MODULE_ADDR
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MODULES_ADDR + 4], 0
+    mov dword ptr [MODULE_ADDR + 0], RAMDISK_LOAD
+    mov dword ptr [MODULE_ADDR + 4], 0
+    mov eax, [BOOTINFO_ADDR + 0x10]
+    mov [MODULE_ADDR + 8], eax
+    mov dword ptr [MODULE_ADDR + 12], 0
+    mov dword ptr [MODULE_ADDR + 16], 1
+    mov dword ptr [MODULE_ADDR + 20], 0
+    mov dword ptr [MODULE_ADDR + 24], 0x646D6172  /* "ramd" */
+    mov dword ptr [MODULE_ADDR + 28], 0x006B7369  /* "isk\0" */
+
+    call e820_probe
+    or dword ptr [BOOTINFO_ADDR + BOOT_FLAGS], BOOT_FLAG_MODULES
 
     mov ax, 0x0003                      /* BIOS 80x25 text mode */
     int 0x10
@@ -128,6 +175,51 @@ no_ramdisk:
     .att_syntax
     ljmp $0x18, $pm_entry
     .intel_syntax noprefix
+
+/* Probe the BIOS E820 map into MEMMAP_ADDR. The 24-byte entry layout is
+ * base, length, type, attributes; it matches fboot_mmap_entry_t. */
+e820_probe:
+    xor ax, ax
+    mov es, ax
+    mov di, MEMMAP_ADDR
+    xor eax, eax
+    mov ecx, 384
+    rep stosd
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MMAP_COUNT], eax
+    mov dword ptr [BOOTINFO_ADDR + BOOT_FLAGS], BOOT_FLAG_MEMMAP
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MMAP_ADDR], MEMMAP_ADDR
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MMAP_ADDR + 4], 0
+    mov di, MEMMAP_ADDR
+    xor ebx, ebx
+1:
+    mov eax, 0xE820
+    mov edx, 0x534D4150
+    mov ecx, 24
+    int 0x15
+    jc 3f
+    cmp eax, 0x534D4150
+    jne 4f
+    /* Skip zero-length and type-0 entries. */
+    cmp dword ptr [di + 8], 0
+    jne 2f
+    cmp dword ptr [di + 12], 0
+    je 5f
+2:
+    cmp dword ptr [di + 16], 0
+    je 5f
+    inc dword ptr [BOOTINFO_ADDR + BOOT_MMAP_COUNT]
+    add di, 24
+    cmp dword ptr [BOOTINFO_ADDR + BOOT_MMAP_COUNT], 64
+    jae 3f
+5:
+    test ebx, ebx
+    jnz 1b
+3:
+    ret
+4:
+    mov dword ptr [BOOTINFO_ADDR + BOOT_MMAP_COUNT], 0
+    mov dword ptr [BOOTINFO_ADDR + BOOT_FLAGS], 0
+    ret
 
 /* load_region: consume load_remaining sectors from load_lba into load_seg.
  * One sector per BIOS call, converted to CHS with the BIOS geometry. */

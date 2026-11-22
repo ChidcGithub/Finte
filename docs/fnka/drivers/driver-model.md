@@ -28,11 +28,11 @@ Every kernel-resident driver increases the trusted computing base.
 | --- | --- | --- |
 | Legacy ATA PIO | Kernel | BIOS/SeaBIOS path |
 | AHCI | Kernel | q35/UEFI path, DMA command lists |
-| UEFI firmware Block I/O | Kernel | x86 UEFI path, firmware calls |
+| UEFI firmware Block I/O | Kernel, inactive | Only if a producer sets `fw_services`; current loaders exit |
 | Disk manager / partitions | Kernel | MBR/GPT parsing |
 | lfc1 / ext4 / NTFS | Kernel | Filesystem implementations |
 | Console / serial / GOP | Kernel | Early output and shell |
-| Input (PS/2, COM1, firmware ConIn) | Kernel | Shell input |
+| Input (PS/2, COM1) | Kernel | Shell input; firmware ConIn inactive |
 | USB storage | Firmware Block I/O | No native USB stack |
 
 There is no user-space driver, no driver registry, no device manager and no
@@ -155,7 +155,8 @@ different call and IPC mechanisms.
 - No user-space driver host.
 - No device manager or hotplug.
 - No driver restart or recovery framework.
-- The x86 UEFI path depends on firmware drivers for storage and input.
+- The x86 UEFI path exits firmware services; storage uses AHCI and input uses
+  PS/2/serial. NVMe, USB storage and USB-HID need native drivers.
 - No native USB stack.
 
 ## 9. Open questions
@@ -173,5 +174,5 @@ different call and IPC mechanisms.
 
 - `make qemu-disk-test`: ATA PIO and filesystems.
 - `make qemu-uefi-disk-test`: AHCI and filesystems.
-- `make qemu-uefi-test`: firmware Block I/O and shell.
+- `make qemu-uefi-test`: native AHCI/serial/PS/2 after `ExitBootServices`.
 - No user-space driver test yet.

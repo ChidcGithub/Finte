@@ -6,6 +6,7 @@
  * services and branches to the ELF entry point.
  */
 #include "finte/uefi.h"
+#include "finte/boot.h"
 
 #define KERNEL_BASE 0x40080000ull
 #define KERNEL_FILE_MAX (2u * 1024u * 1024u)
@@ -18,6 +19,18 @@ static const EFI_GUID loaded_image_guid = {
 };
 static const EFI_GUID simple_fs_guid = {
     0x964E5B22, 0x6459, 0x11D2, {0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B}
+};
+static const EFI_GUID gop_guid = {
+    0x9042A9DE, 0x23DC, 0x4A38, {0x96, 0xFB, 0x7A, 0xDE, 0xD0, 0x80, 0x51, 0x6A}
+};
+static const EFI_GUID acpi20_guid = {
+    0x8868E871, 0xE4F1, 0x11D3, {0xBC, 0x22, 0x00, 0x80, 0xC7, 0x3C, 0x88, 0x81}
+};
+static const EFI_GUID acpi10_guid = {
+    0xEB9D2D30, 0x2D88, 0x11D3, {0x9A, 0x16, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D}
+};
+static const EFI_GUID dtb_guid = {
+    0xB1B621D5, 0xF19C, 0x41A5, {0x83, 0x0B, 0xD9, 0x15, 0x2C, 0x69, 0xAA, 0xE0}
 };
 
 typedef struct {
@@ -50,6 +63,9 @@ typedef struct {
 
 static uint8_t kernel_file[KERNEL_FILE_MAX] __attribute__((aligned(4096)));
 static uint8_t memory_map[MEMORY_MAP_MAX] __attribute__((aligned(8)));
+static fboot_info_t boot_info __attribute__((aligned(4096)));
+static fboot_mmap_entry_t boot_mmap[FINTE_BOOT_MMAP_MAX];
+static fboot_module_t boot_modules[FINTE_BOOT_MODULE_MAX];
 
 static void *memset(void *dst, int value, size_t n)
 {
@@ -68,6 +84,47 @@ static void *memcpy(void *dst, const void *src, size_t n)
         *d++ = *s++;
     }
     return dst;
+}
+
+static int guid_eq(const EFI_GUID *a, const EFI_GUID *b)
+{
+    return a->Data1 == b->Data1 && a->Data2 == b->Data2 &&
+           a->Data3 == b->Data3 &&
+           a->Data4[0] == b->Data4[0] && a->Data4[1] == b->Data4[1] &&
+           a->Data4[2] == b->Data4[2] && a->Data4[3] == b->Data4[3] &&
+           a->Data4[4] == b->Data4[4] && a->Data4[5] == b->Data4[5] &&
+           a->Data4[6] == b->Data4[6] && a->Data4[7] == b->Data4[7];
+}
+
+static void *find_config_table(EFI_SYSTEM_TABLE *st, const EFI_GUID *guid)
+{
+    if (!st || !st->ConfigurationTable) {
+        return NULL;
+    }
+    for (UINTN i = 0; i < st->NumberOfTableEntries; i++) {
+        if (guid_eq(&st->ConfigurationTable[i].VendorGuid, guid)) {
+            return st->ConfigurationTable[i].VendorTable;
+        }
+    }
+    return NULL;
+}
+
+static uint32_t map_uefi_memory_type(uint32_t type)
+{
+    switch (type) {
+    case 7:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+        return FINTE_BOOT_MMAP_USABLE;
+    case 9:
+        return FINTE_BOOT_MMAP_ACPI_RECLAIM;
+    case 10:
+        return FINTE_BOOT_MMAP_ACPI_NVS;
+    default:
+        return FINTE_BOOT_MMAP_RESERVED;
+    }
 }
 
 static void conout(EFI_SYSTEM_TABLE *st, const char *s)
@@ -144,6 +201,81 @@ static void sync_instruction_cache(uint64_t start, uint64_t end)
         __asm__ volatile("ic ivau, %0" : : "r"(p) : "memory");
     }
     __asm__ volatile("dsb ish\n\tisb" : : : "memory");
+}
+
+static void fill_boot_info(EFI_SYSTEM_TABLE *st, uint64_t alloc_base,
+                           uint64_t alloc_size, UINTN map_size,
+                           UINTN desc_size)
+{
+    memset(&boot_info, 0, sizeof(boot_info));
+    boot_info.magic = FINTE_BOOT_MAGIC;
+    boot_info.version = FINTE_BOOT_VERSION;
+    boot_info.header_size = FINTE_BOOT_INFO_BYTES;
+    boot_info.total_size = FINTE_BOOT_INFO_BYTES;
+    boot_info.arch = FINTE_BOOT_ARCH_ARM64;
+    boot_info.platform = FINTE_BOOT_PLATFORM_UEFI;
+    boot_info.console_type = FINTE_BOOT_CONSOLE_PL011;
+    boot_info.kernel_base = alloc_base;
+    boot_info.kernel_size = (uint32_t)alloc_size;
+    boot_info.memmap_desc_size = sizeof(fboot_mmap_entry_t);
+    boot_info.module_desc_size = sizeof(fboot_module_t);
+    boot_info.fw_services = 0;
+
+    uint32_t n = 0;
+    if (desc_size >= sizeof(EFI_MEMORY_DESCRIPTOR)) {
+        for (UINTN off = 0;
+             off + desc_size <= map_size && n < FINTE_BOOT_MMAP_MAX;
+             off += desc_size) {
+            EFI_MEMORY_DESCRIPTOR *d =
+                (EFI_MEMORY_DESCRIPTOR *)(memory_map + off);
+            if (d->NumberOfPages == 0) {
+                continue;
+            }
+            boot_mmap[n].base = d->PhysicalStart;
+            boot_mmap[n].length = d->NumberOfPages * 4096ull;
+            boot_mmap[n].type = map_uefi_memory_type(d->Type);
+            boot_mmap[n].flags = 0;
+            n++;
+        }
+    }
+    if (n) {
+        boot_info.memmap_addr = (uint64_t)(uintptr_t)boot_mmap;
+        boot_info.memmap_count = n;
+        boot_info.flags |= FINTE_BOOT_FLAG_MEMMAP;
+    }
+
+    void *acpi = find_config_table(st, &acpi20_guid);
+    if (!acpi) {
+        acpi = find_config_table(st, &acpi10_guid);
+    }
+    if (acpi) {
+        boot_info.acpi_addr = (uint64_t)(uintptr_t)acpi;
+        boot_info.flags |= FINTE_BOOT_FLAG_ACPI;
+    }
+    void *dtb = find_config_table(st, &dtb_guid);
+    if (dtb) {
+        boot_info.dtb_addr = (uint64_t)(uintptr_t)dtb;
+        boot_info.flags |= FINTE_BOOT_FLAG_DTB;
+    }
+
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_STATUS s = st->BootServices->LocateProtocol(
+        (EFI_GUID *)&gop_guid, NULL, (void **)&gop);
+    if (efi_ok(s) && gop && gop->Mode && gop->Mode->Info) {
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = gop->Mode->Info;
+        if ((info->PixelFormat == 0 || info->PixelFormat == 1) &&
+            gop->Mode->FrameBufferBase && info->PixelsPerScanLine) {
+            boot_info.fb_addr = gop->Mode->FrameBufferBase;
+            boot_info.fb_pitch = info->PixelsPerScanLine * 4;
+            boot_info.fb_width = info->HorizontalResolution;
+            boot_info.fb_height = info->VerticalResolution;
+            boot_info.fb_bpp = 32;
+            boot_info.fb_format = info->PixelFormat;
+            boot_info.flags |= FINTE_BOOT_FLAG_FRAMEBUFFER;
+        }
+    }
+    boot_info.modules_addr = (uint64_t)(uintptr_t)boot_modules;
+    boot_info.module_count = 0;
 }
 
 EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
@@ -228,6 +360,8 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
         if (!efi_ok(s)) {
             fail(st, "GetMemoryMap failed");
         }
+        fill_boot_info(st, alloc_base, alloc_end - alloc_base,
+                       map_size, desc_size);
         s = st->BootServices->ExitBootServices(image, map_key);
         if (efi_ok(s)) {
             break;
@@ -240,7 +374,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
     typedef void (*entry_fn)(uint64_t, uint64_t, uint64_t);
     entry_fn entry = (entry_fn)(uintptr_t)eh->entry;
     __asm__ volatile("msr daifset, #3" : : : "memory");
-    entry(0, 0, 0);
+    entry((uint64_t)(uintptr_t)&boot_info, FINTE_BOOT_MAGIC, 0);
     for (;;) {
         __asm__ volatile("wfi");
     }

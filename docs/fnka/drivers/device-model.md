@@ -14,7 +14,8 @@
 - `finte/hal.h` exposes raw block devices through `hal_blk_count()`,
   `hal_blk_info()`, `hal_blk_read()` and `hal_blk_write()`.
 - x86 BIOS uses ATA PIO.
-- x86 UEFI uses AHCI where available and firmware Block I/O otherwise.
+- x86 UEFI uses native AHCI; firmware Block I/O is inactive after
+  `ExitBootServices`.
 - The disk manager parses MBR/GPT partitions and mounts lfc1, ext4 and NTFS.
 - There is no generic device object, registry, bus enumeration or driver
   matching.
@@ -107,5 +108,5 @@ user-space service.
 
 - `make qemu-disk-test`: one ATA disk with three partitions.
 - `make qemu-uefi-disk-test`: AHCI disk with three partitions.
-- `make qemu-uefi-test`: firmware Block I/O.
+- `make qemu-uefi-test`: native AHCI and serial/PS/2 after `ExitBootServices`.
 - No hotplug or device-removal test yet.

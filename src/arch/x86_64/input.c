@@ -271,7 +271,8 @@ void input_boot(const fboot_info_t *bi)
 {
     g_con_in = NULL;
     g_input_usb = 0;
-    if (bi && bi->magic == FINTE_BOOT_MAGIC && bi->console_type == 2) {
+    if (bi && bi->magic == FINTE_BOOT_MAGIC &&
+        bi->console_type == FINTE_BOOT_CONSOLE_UEFI && bi->fw_services) {
         g_con_in = (efi_simple_text_input_protocol_t *)(uintptr_t)bi->efi_con_in;
         g_input_usb = (int)bi->input_usb;
     }

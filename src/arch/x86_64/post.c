@@ -89,18 +89,16 @@ void finte_kernel_post(uint64_t boot_arg, uint64_t magic)
     int custom = magic == FINTE_BOOT_MAGIC;
     const fboot_info_t *bi = custom ?
         (const fboot_info_t *)(uintptr_t)boot_arg : NULL;
-    int uefi = custom && bi && bi->magic == FINTE_BOOT_MAGIC &&
-               bi->console_type == 2;
+    int boot_ok = custom &&
+                  finte_boot_validate(bi, FINTE_BOOT_ARCH_X86_64) ==
+                      FINTE_BOOT_OK;
+    int uefi = boot_ok && bi->console_type == FINTE_BOOT_CONSOLE_UEFI;
 
-    post_check("boot protocol", custom || magic == FINTE_MULTIBOOT_MAGIC,
+    post_check("boot protocol", boot_ok || magic == FINTE_MULTIBOOT_MAGIC,
                uefi ? "custom UEFI loader" :
-               (custom ? "custom BIOS loader" : "Multiboot"));
+               (boot_ok ? "custom BIOS loader" : "Multiboot"));
     if (custom) {
-        post_check("boot info", bi != NULL &&
-                                 bi->magic == FINTE_BOOT_MAGIC &&
-                                 bi->kernel_size > 0 &&
-                                 bi->ramdisk_size <= 0x40000,
-                   "magic/ramdisk bounds");
+        post_check("boot info", boot_ok, "v1 structure and ranges");
     }
     post_check("long mode", (cr0 & 0x80000001ull) == 0x80000001ull &&
                             (cr4 & 0x20ull) != 0 &&

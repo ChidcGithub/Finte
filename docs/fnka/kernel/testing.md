@@ -27,7 +27,7 @@ a named platform.
 | Level | Purpose | Current examples |
 | --- | --- | --- |
 | Compile-time | Types, warnings, architecture builds | `make all`, `make images`, `build-win.bat` |
-| Unit tests | Objects, caps, queues, allocators | `make test` (20 host tests) |
+| Unit tests | Objects, caps, queues, allocators, boot protocol | `make test` (21 host tests) |
 | Kernel self-tests | Controlled kernel environment | 147 checks, 6 sections |
 | QEMU boot tests | Startup, shell, exceptions, timers | `make qemu-test`, `make qemu-uefi-test` |
 | Integration tests | Userland, IPC, storage, drivers | `make qemu-disk-test`, `procs`, `services` |
@@ -37,7 +37,7 @@ a named platform.
 ## 3. Current commands
 
 ```bash
-make test                 # 20 host tests
+make test                 # 21 host tests
 make selfcheck            # 147 core checks on the host
 make qemu-test            # BIOS boot and CLI checks
 make qemu-uefi-test       # UEFI/OVMF boot and CLI checks
@@ -63,6 +63,7 @@ matrix.
 | --- | --- | --- | --- |
 | Build and link | Required / passing | Required / passing | CI builds both |
 | Boot to kernel entry | Passing | Passing | BIOS/UEFI; `-kernel` and AAVMF |
+| Boot protocol v1 | Passing | Passing | E820/UEFI map, ACPI/DTB, modules, validator |
 | Core self-tests | Passing (147) | Passing (147) | Same core suite |
 | Physical allocator | Partial | Partial | Static heap + page cache |
 | Virtual memory | Partial | Missing | x86 paging only |

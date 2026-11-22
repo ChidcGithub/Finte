@@ -57,7 +57,7 @@ Flow Group is an optional organization layer:
 - Architectures: x86_64 and AArch64.
 - Primary validation: QEMU x86_64 (SeaBIOS and OVMF) and QEMU AArch64
   `virt` (direct ELF and AAVMF).
-- Core tests: 20 host tests; 147 core checks on x86_64 and arm64.
+- Core tests: 21 host tests; 147 core checks on x86_64 and arm64.
 - User mode: x86_64 ring 3 only.
 - Release media: x86_64 BIOS/UEFI IMG and ISO; arm64 UEFI IMG and ISO.
 
@@ -77,7 +77,7 @@ Flow Group is an optional organization layer:
 | Physical/virtual memory | Partial | Both architectures own MMU and allocator | x86 only for MMU/user |
 | Interrupts and timers | Partial | IDT/GIC, timer IRQ, IPI on both | x86 only for interrupts |
 | SMP | Partial | Same semantics on both | x86_64 only |
-| Boot handoff | Partial | One versioned protocol with owned memory | `src/include/finte/boot.h`, two loaders |
+| Boot handoff | Partial | Consume v1 memory map/ACPI in the allocator | `boot.h`, `bootinfo.c`, three producers |
 | Kernel/user boundary | Partial | Small kernel, isolated drivers/services | `src/arch/x86_64/process.c` |
 | Driver framework | Partial | Hybrid kernel/user drivers | in-kernel block/filesystem code |
 | Native ABI | Partial | Stable Finte ABI and native libc | verb ABI and x86 demo syscalls |
@@ -117,9 +117,10 @@ system:
   context, stack, CPU affinity, scheduler links and blocking state; `fflow_t`
   owns caps, Fuel, persona and task state. The Flow state still mirrors its
   primary Thread, and each Flow has exactly one Thread.
-- **The x86_64 UEFI loader does not call `ExitBootServices`.** It passes
-  firmware pointers into the kernel and keeps firmware Block I/O and ConIn
-  available. The arm64 UEFI loader does exit boot services.
+- **Boot Protocol v1 is produced and validated**, but the kernel does not yet
+  build its allocator from the memory map or parse ACPI/DTB. Both UEFI loaders
+  now call `ExitBootServices`; x86 UEFI input is serial/PS/2 until a native
+  USB-HID driver exists.
 - **arm64 is not a peer port yet.** It has a working UEFI boot path, PL011,
   generic counter, PSCI shutdown and the 147 core checks, but no MMU,
   GIC, timer interrupts, SMP or user mode.

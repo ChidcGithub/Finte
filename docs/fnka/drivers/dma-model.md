@@ -15,7 +15,8 @@
   physical addresses.
 - The AHCI driver uses static, aligned kernel buffers.
 - Legacy ATA PIO uses programmed I/O, not DMA.
-- x86 UEFI firmware Block I/O performs DMA inside firmware.
+- x86 UEFI firmware Block I/O performed DMA inside firmware; the current
+  loader exits boot services, so only native AHCI DMA remains.
 - There is no IOMMU configuration, no DMA address-space abstraction and no
   user-space DMA buffer grant.
 - arm64 has no block driver or DMA path.

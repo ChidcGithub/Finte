@@ -43,7 +43,7 @@
 | Boundary | Current status |
 | --- | --- |
 | Ring 3 → kernel syscall | x86_64 only; user pointers validated |
-| Kernel → firmware | x86 UEFI keeps Boot Services and firmware IDT |
+| Kernel → firmware | Boot-time only; both UEFI loaders exit Boot Services |
 | Kernel → device | In-kernel drivers; no IOMMU |
 | Bootloader → kernel | Two handoff formats; boot data only partially validated |
 | Flow → Flow | Capability and page-table isolation |
@@ -111,7 +111,8 @@ map arbitrary physical memory or program arbitrary device registers.
 - No IOMMU or DMA isolation.
 - No user-space drivers or IRQ/MMIO capabilities.
 - No signed boot or Secure Boot integration; the UEFI loaders are unsigned.
-- x86 UEFI keeps firmware services and the firmware IDT available.
+- The boot memory map/ACPI/DTB are validated but not yet consumed by the
+  allocator or device model. x86 UEFI has no native USB-HID input.
 - The Linux persona runs in the kernel.
 - The global core lock serializes verbs; a blocking or long-running verb can
   affect other CPUs.
