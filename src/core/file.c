@@ -126,6 +126,41 @@ int64_t finte_file_handle_write(fhandle_t h, const void *buf, size_t len)
     return n;
 }
 
+int64_t finte_file_handle_read_at(fhandle_t h, uint64_t offset, void *buf,
+                                  size_t len)
+{
+    ffile_t *f = file_get(h);
+    if (!f || !(f->rights & FINTE_R_READ)) {
+        return FINTE_ERR_PERM;
+    }
+    if (f->backend) {
+        return finte_disk_read(f->path, offset, buf, len);
+    }
+    if (offset >= f->size) {
+        return 0;
+    }
+    uint64_t avail = f->size - offset;
+    if (len > avail) {
+        len = (size_t)avail;
+    }
+    finte_memcpy(buf, f->data + offset, len);
+    return (int64_t)len;
+}
+
+int64_t finte_file_handle_write_at(fhandle_t h, uint64_t offset,
+                                   const void *buf, size_t len)
+{
+    ffile_t *f = file_get(h);
+    if (!f || !(f->rights & FINTE_R_WRITE) || !f->backend) {
+        return FINTE_ERR_PERM;
+    }
+    int64_t n = finte_disk_write(f->path, offset, buf, len);
+    if (n > 0 && offset + (uint64_t)n > f->size) {
+        f->size = (size_t)(offset + (uint64_t)n);
+    }
+    return n;
+}
+
 int finte_file_handle_seek(fhandle_t h, uint64_t off)
 {
     ffile_t *f = file_get(h);

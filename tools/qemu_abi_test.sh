@@ -22,6 +22,7 @@ run_once() {
     fi
     qemu-system-x86_64 -m 256M -smp 1 -machine pc -accel tcg \
         -drive if=floppy,format=raw,file=build/finte-bios.img -boot a \
+        -drive format=raw,file=build/disk-test.img,if=ide,index=0,media=disk \
         -display none -monitor none -no-reboot -snapshot \
         -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
         -serial stdio -D "$QEMULOG" -d guest_errors < "$FIFO" > "$LOG" 2>&1 &
@@ -39,7 +40,7 @@ run_once() {
         sleep 0.1
     done
     if kill -0 "$qpid" 2>/dev/null; then
-        printf 'abi\n' >&3 || true
+        printf 'mount hd0p1 /mnt\nabi\n' >&3 || true
     else
         echo "[abi] QEMU exited before the shell prompt" >&2
     fi
@@ -64,7 +65,8 @@ run_once() {
     rm -f "$FIFO"
 
     if grep -q "abi: PASS" "$LOG" &&
-        grep -Fq "$ABI_LINE" "$LOG"; then
+        grep -Fq "$ABI_LINE" "$LOG" &&
+        grep -Fq "[fdtab] disk=OK" "$LOG"; then
         return 0
     fi
 

@@ -118,7 +118,6 @@ typedef struct ffile_desc ffile_desc_t;
  * fork children share the description and therefore the offset. */
 typedef struct ffd {
     ffile_desc_t *ofd;
-    int32_t cap; /* per-process capability for file-backed descriptions */
     uint8_t fd_flags;
 } ffd_t;
 

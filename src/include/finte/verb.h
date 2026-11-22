@@ -54,6 +54,10 @@ typedef struct fcap_info {
 int finte_disk_file_open(const char *path, uint32_t flags, fhandle_t *out);
 int64_t finte_file_handle_read(fhandle_t h, void *buf, size_t len);
 int64_t finte_file_handle_write(fhandle_t h, const void *buf, size_t len);
+int64_t finte_file_handle_read_at(fhandle_t h, uint64_t offset, void *buf,
+                                  size_t len);
+int64_t finte_file_handle_write_at(fhandle_t h, uint64_t offset,
+                                   const void *buf, size_t len);
 int finte_file_handle_seek(fhandle_t h, uint64_t off);
 int64_t finte_file_handle_size(fhandle_t h);
 int finte_file_handle_close(fhandle_t h);

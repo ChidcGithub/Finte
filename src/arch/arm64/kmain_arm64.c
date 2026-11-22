@@ -85,7 +85,9 @@ static void arm64_disk_check(void)
                     hal_console_write(buf, (size_t)n);
                 }
             }
-            (void)finte_disk_umount(target);
+            if (part->number != 1) {
+                (void)finte_disk_umount(target);
+            }
         }
     }
 }

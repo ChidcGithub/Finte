@@ -155,7 +155,7 @@ arm64-uefi-test: $(BUILD)/finte-arm64.iso
 	AAVMF_CODE=$(AAVMF_CODE) AAVMF_VARS=$(AAVMF_VARS) \
 	  bash tools/qemu_arm64_uefi_test.sh
 
-abi-test: $(BUILD)/finte-bios.img
+abi-test: $(BUILD)/finte-bios.img $(BUILD)/disk-test.img
 	bash tools/qemu_abi_test.sh
 
 arm64-disk-test: arm64 $(BUILD)/disk-test.img

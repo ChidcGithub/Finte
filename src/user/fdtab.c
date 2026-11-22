@@ -21,6 +21,9 @@
 #define F_GETFL 3
 #define FD_CLOEXEC 1
 #define FPROC_OPEN_READ 1
+#define FPROC_OPEN_WRITE 2
+#define FPROC_OPEN_CREATE 4
+#define FPROC_OPEN_TRUNC 8
 
 static long sc(long nr, long a, long b, long c)
 {
@@ -42,6 +45,90 @@ static void print(const char *s)
 static int open_read(void)
 {
     return (int)sc(SYS_OPEN, (long)"hello.txt", FPROC_OPEN_READ, 9);
+}
+
+static int make_path(char *buf, const char *root, const char *name)
+{
+    int n = 0;
+    while (*root) {
+        buf[n++] = *root++;
+    }
+    buf[n++] = '/';
+    while (*name) {
+        buf[n++] = *name++;
+    }
+    buf[n] = 0;
+    return n;
+}
+
+static int number_path(char *buf, const char *root, int idx)
+{
+    char digits[8];
+    int d = 0;
+    if (idx == 0) {
+        digits[d++] = '0';
+    } else {
+        while (idx > 0) {
+            digits[d++] = (char)('0' + idx % 10);
+            idx /= 10;
+        }
+    }
+    char name[12];
+    int n = 0;
+    name[n++] = 'f';
+    name[n++] = 'd';
+    while (d > 0) {
+        name[n++] = digits[--d];
+    }
+    name[n] = 0;
+    return make_path(buf, root, name);
+}
+
+/* Open 80 independent disk files. Before the fd table was decoupled from
+ * capability slots this failed at the 32-slot capability limit. */
+static int disk_table_test(const char *root)
+{
+    char path[64];
+    int disk_ok = 1;
+    for (int i = 0; i < 80; i++) {
+        number_path(path, root, i);
+        int len = 0;
+        while (path[len]) {
+            len++;
+        }
+        int fd = (int)sc(SYS_OPEN, (long)path,
+                         FPROC_OPEN_WRITE | FPROC_OPEN_CREATE |
+                             FPROC_OPEN_TRUNC,
+                         len);
+        if (fd < 0) {
+            disk_ok = 0;
+            break;
+        }
+        sc(SYS_CLOSE, fd, 0, 0);
+    }
+
+    int fds[80];
+    int count = 0;
+    if (disk_ok) {
+        for (int i = 0; i < 80; i++) {
+            number_path(path, root, i);
+            int len = 0;
+            while (path[len]) {
+                len++;
+            }
+            int fd = (int)sc(SYS_OPEN, (long)path, FPROC_OPEN_READ, len);
+            if (fd < 0) {
+                disk_ok = 0;
+                break;
+            }
+            fds[count++] = fd;
+        }
+        for (int i = 0; i < count; i++) {
+            sc(SYS_CLOSE, fds[i], 0, 0);
+        }
+        disk_ok = disk_ok && count == 80;
+    }
+    return disk_ok;
 }
 
 static int read_one(int fd, unsigned char expect)
@@ -83,13 +170,13 @@ void _start(void)
     ok = ok && sc(SYS_CLOSE, dupfd, 0, 0) == 0;
 
     /* Grow past the old 16-entry table, then reuse the lowest slot. */
-    int fds[40];
+    int fds[80];
     int count = 0;
     int grew = 1;
-    for (int i = 0; i < 40; i++) {
+    for (int i = 0; i < 80; i++) {
         fds[i] = -1;
     }
-    for (int i = 0; i < 40; i++) {
+    for (int i = 0; i < 80; i++) {
         int fd = open_read();
         if (fd < 0) {
             grew = 0;
@@ -97,7 +184,7 @@ void _start(void)
         }
         fds[count++] = fd;
     }
-    ok = ok && grew && count == 40 && fds[39] > 15;
+    ok = ok && grew && count == 80 && fds[39] > 15;
     for (int i = 0; i < count; i++) {
         ok = ok && sc(SYS_CLOSE, fds[i], 0, 0) == 0;
     }
@@ -184,6 +271,26 @@ void _start(void)
     ok = ok && read_one(9, 'H');
     ok = ok && sc(SYS_CLOSE, 9, 0, 0) == 0;
     ok = ok && sc(SYS_CLOSE, cloexec, 0, 0) == 0;
+
+    /* If a writable filesystem is mounted, prove that many independent
+     * file-backed descriptors no longer consume capability slots. */
+    static const char *roots[] = { "/mnt", "/mnt1", "/mnt2", "/mnt3" };
+    for (unsigned i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+        char probe[64];
+        int plen = make_path(probe, roots[i], "fdprobe");
+        int fd = (int)sc(SYS_OPEN, (long)probe,
+                         FPROC_OPEN_WRITE | FPROC_OPEN_CREATE |
+                             FPROC_OPEN_TRUNC,
+                         plen);
+        if (fd < 0) {
+            continue;
+        }
+        sc(SYS_CLOSE, fd, 0, 0);
+        int disk_ok = disk_table_test(roots[i]);
+        print(disk_ok ? "[fdtab] disk=OK\n" : "[fdtab] disk=FAIL\n");
+        ok = ok && disk_ok;
+        break;
+    }
 
     print(ok ? "[fdtab] OK\n" : "[fdtab] FAIL\n");
     sc(SYS_EXIT, ok ? 0 : 1, 0, 0);

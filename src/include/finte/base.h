@@ -51,7 +51,7 @@
 #define FINTE_MAX_ARENAS 16
 #endif
 #ifndef FINTE_MAX_FILES
-#define FINTE_MAX_FILES 64
+#define FINTE_MAX_FILES 256
 #endif
 #ifndef FINTE_MAX_DIRS
 #define FINTE_MAX_DIRS 8

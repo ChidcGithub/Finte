@@ -508,9 +508,10 @@ The performance argument is structural: handles are direct indexes, capability c
   reporting and SIGALRM interval timers (`alarm`/`setitimer`/`getitimer`),
   plus user-to-user cap transfer are in place. The fd table grows to 256
   descriptors, dups and fork children share open-file descriptions with
-  refcounted offsets, `fcntl(F_DUPFD)` is supported, and exec preserves
-  descriptors except those marked `FD_CLOEXEC`. Mappings are capped at 64
-  pages and CPU-time timers (ITIMER_VIRTUAL/PROF) are absent.
+  refcounted offsets, `fcntl(F_DUPFD)` is supported, file descriptors no
+  longer consume capability slots, and exec preserves descriptors except those
+  marked `FD_CLOEXEC`. Mappings are capped at 64 pages and CPU-time timers
+  (ITIMER_VIRTUAL/PROF) are absent.
 - **SMP fork/sleep stress.** The x86 process ABI suite is pinned to the BSP and
   the arm64 suite runs 4 CPUs. Simultaneous fork + sleep + migration is not yet
   a claimed stress-tested configuration.

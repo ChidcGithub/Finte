@@ -905,15 +905,7 @@ static int fd_bind(fproc_t *p, int fd, ffile_desc_t *o, uint8_t fd_flags)
     if (!p || !o || fd < 0 || (uint32_t)fd >= p->fd_capacity) {
         return -1;
     }
-    int cap = -1;
-    if (o->kind == FPROC_FD_FILE && p->flow) {
-        cap = finte_cap_install(p->flow, o->handle, o->rights);
-        if (cap < 0) {
-            return -1;
-        }
-    }
     p->fds[fd].ofd = o;
-    p->fds[fd].cap = cap;
     p->fds[fd].fd_flags = fd_flags;
     return 0;
 }
@@ -933,7 +925,6 @@ static int proc_fds_init(fproc_t *p)
     ofd_ref(o);
     for (int i = 0; i < 3; i++) {
         p->fds[i].ofd = o;
-        p->fds[i].cap = -1;
         p->fds[i].fd_flags = 0;
     }
     return 0;
@@ -1122,19 +1113,15 @@ static void fd_close(fproc_t *p, int fd)
     if (!o) {
         return;
     }
-    int32_t cap = e->cap;
     e->ofd = NULL;
-    e->cap = -1;
     e->fd_flags = 0;
-    if (cap >= 0 && p->flow) {
-        (void)finte_cap_drop_index(p->flow, (uint16_t)cap);
-    }
     ofd_unref(o);
 }
 
 static int fd_read_at(fproc_t *p, ffd_t *e, uint64_t offset, void *dst,
                       size_t len)
 {
+    (void)p;
     ffile_desc_t *o = e ? e->ofd : NULL;
     if (!o) {
         return -1;
@@ -1151,9 +1138,6 @@ static int fd_read_at(fproc_t *p, ffd_t *e, uint64_t offset, void *dst,
         return (int)n;
     }
     if (o->kind == FPROC_FD_FILE) {
-        if (e->cap < 0) {
-            return -1;
-        }
         uint8_t bounce[256];
         size_t total = 0;
         while (total < len) {
@@ -1161,17 +1145,17 @@ static int fd_read_at(fproc_t *p, ffd_t *e, uint64_t offset, void *dst,
             if (chunk > sizeof(bounce)) {
                 chunk = sizeof(bounce);
             }
-            fret_t r = fx_file_read(p->flow, (uint16_t)e->cap, offset + total,
-                                    bounce, chunk);
-            if (r.status != FINTE_OK) {
+            int64_t r = finte_file_handle_read_at(o->handle, offset + total,
+                                                  bounce, chunk);
+            if (r < 0) {
                 return total ? (int)total : -1;
             }
-            if (r.value == 0) {
+            if (r == 0) {
                 break;
             }
-            finte_memcpy((uint8_t *)dst + total, bounce, (size_t)r.value);
-            total += (size_t)r.value;
-            if ((size_t)r.value < chunk) {
+            finte_memcpy((uint8_t *)dst + total, bounce, (size_t)r);
+            total += (size_t)r;
+            if ((size_t)r < chunk) {
                 break;
             }
         }
@@ -1214,9 +1198,6 @@ static int fd_write(fproc_t *p, int fd, const void *src, size_t len)
         return (int)len;
     }
     if (o->kind == FPROC_FD_FILE) {
-        if (e->cap < 0) {
-            return -1;
-        }
         uint8_t bounce[256];
         size_t total = 0;
         while (total < len) {
@@ -1225,9 +1206,9 @@ static int fd_write(fproc_t *p, int fd, const void *src, size_t len)
                 chunk = sizeof(bounce);
             }
             finte_memcpy(bounce, (const uint8_t *)src + total, chunk);
-            fret_t r = fx_file_write(p->flow, (uint16_t)e->cap,
-                                     o->offset + total, bounce, chunk);
-            if (r.status != FINTE_OK || r.value != (uint64_t)chunk) {
+            int64_t r = finte_file_handle_write_at(
+                o->handle, o->offset + total, bounce, chunk);
+            if (r != (int64_t)chunk) {
                 return total ? (int)total : -1;
             }
             total += chunk;

@@ -145,6 +145,8 @@ never treated as user pointers.
   mappings and the fixed shared/arena mappings. Descriptors reference
   refcounted open-file descriptions; fork copies the table and shares those
   descriptions, while exec keeps all descriptors except `FD_CLOEXEC` ones.
+  Descriptor I/O uses the kernel file handle directly, so file-backed fds do
+  not consume per-flow capability slots; the file table holds 256 opens.
 - An Arena owns its backing pages until the Arena is destroyed.
 - A Channel owns queued messages and their attached capability references.
 - Anonymous `mmap`/`munmap` exist with a 64-page-per-mapping cap. File-backed

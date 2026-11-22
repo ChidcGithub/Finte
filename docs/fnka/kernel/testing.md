@@ -90,7 +90,8 @@ matrix.
 
 - No arm64 GICv3, ACPI/DTB or physical-hardware test.
 - No ITIMER_VIRTUAL/PROF timer test.
-- No fd-table stress test beyond 256 descriptors or across concurrent closes.
+- No fd-table stress test beyond 256 descriptors or across concurrent closes;
+  the 80-file disk test covers the former capability-slot limit.
 - x86_64 process ABI runs on one CPU; arm64 covers 4 CPUs. Simultaneous
   fork/sleep/migration is not stress-tested.
 - No virtio IRQ or queue-stress test; the arm64 block driver is polled.

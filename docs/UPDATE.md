@@ -57,6 +57,13 @@ Short notes only. GitHub releases carry the per-commit changes.
   covers growth past 16 slots, shared offsets, exact and minimum dup targets,
   fork and fork+exec inheritance and close isolation; the shared ABI line
   reports `fdtab=OK`.
+- Decoupled file descriptors from capability slots: a descriptor now reads and
+  writes through its open-file description's kernel file handle using
+  offset-based read/write helpers, so neither `open` nor `dup` spends one of
+  the flow's 32 capability slots. `FINTE_MAX_FILES` grows to 256. The ABI
+  harness now mounts the lfc1 test disk, and `fdtab.elf` creates and opens 80
+  independent disk files (`[fdtab] disk=OK`), beyond both the old 32-slot cap
+  limit and the old 64-file table.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.
