@@ -34,6 +34,9 @@ static void host_space_destroy(faddr_space_t *as)
     }
 }
 
+static int host_map_page(faddr_space_t *as, uint64_t va, uint64_t pa,
+                         uint32_t prot);
+
 static int host_space_clone(faddr_space_t *dst, faddr_space_t *src)
 {
     if (!dst || !src || !dst->arch || !src->arch) {
@@ -41,8 +44,34 @@ static int host_space_clone(faddr_space_t *dst, faddr_space_t *src)
     }
     host_as_t *d = (host_as_t *)dst->arch;
     host_as_t *s = (host_as_t *)src->arch;
-    d->count = s->count;
-    finte_memcpy(d->map, s->map, sizeof(s->map));
+    d->count = 0;
+    for (uint32_t i = 0; i < s->count; i++) {
+        uint64_t va = s->map[i].va;
+        uint64_t pa = s->map[i].pa;
+        uint32_t pte_prot = s->map[i].prot;
+        if (!finte_as_has_page(src, pa)) {
+            if (host_map_page(dst, va, pa, pte_prot) != 0) {
+                return -1;
+            }
+            continue;
+        }
+        uint32_t prot = finte_cow_prot(pa);
+        if (!prot) {
+            prot = pte_prot;
+        }
+        uint32_t map_prot = prot & ~FPROC_PROT_WRITE;
+        if (finte_cow_share(pa, prot) != 0) {
+            return -1;
+        }
+        if (finte_as_share_page(dst, pa) != 0) {
+            (void)finte_cow_put(pa);
+            return -1;
+        }
+        if (host_map_page(src, va, pa, map_prot) != 0 ||
+            host_map_page(dst, va, pa, map_prot) != 0) {
+            return -1;
+        }
+    }
     return 0;
 }
 

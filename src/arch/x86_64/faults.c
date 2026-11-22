@@ -79,19 +79,26 @@ void faults_set_kernel_cs(uint16_t cs)
     g_idt[0x21].selector = cs;
 }
 
-void kx_fault_ex(uint64_t vec, uint64_t cs, uint64_t rip)
+void kx_fault_ex(uint64_t vec, uint64_t err, uint64_t rip, uint64_t cs)
 {
     uint64_t cr2 = 0;
     __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
     if ((cs & 3u) == 3u) {
+        fflow_t *f = finte_flow_current();
+        fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+        if (p && p->space && vec == 14u && (err & 3u) == 3u &&
+            finte_as_cow_fault(p->space, cr2, 1) == 0) {
+            return; /* instruction retries after the TLB flush */
+        }
         finte_user_fault(vec, rip, cr2);
         /* No process owns this ring-3 context: fall through to the panic. */
     }
     char buf[224];
     int n = finte_format(buf, sizeof(buf),
-                         "\n[kernel] EXCEPTION %llu cs=0x%llx rip=0x%llx "
-                         "cr2=0x%llx -- halted\n",
+                         "\n[kernel] EXCEPTION %llu err=0x%llx cs=0x%llx "
+                         "rip=0x%llx cr2=0x%llx -- halted\n",
                          (unsigned long long)vec,
+                         (unsigned long long)err,
                          (unsigned long long)cs,
                          (unsigned long long)rip,
                          (unsigned long long)cr2);

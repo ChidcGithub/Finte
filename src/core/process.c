@@ -65,6 +65,187 @@ static fproc_t *g_procs[FPROC_MAX_PROCS];
 static uint32_t g_next_pid = 1;
 static uint32_t g_live_spaces;
 static volatile int g_proc_lock;
+
+/* Copy-on-write registry: physical page -> (spaces mapping it, original
+ * protection). Pages are shared read-only on clone; the first write makes a
+ * private copy (or upgrades the last owner in place). */
+#define FPROC_COW_MAX 4096
+
+typedef struct fcow {
+    uint64_t pa;
+    uint32_t refs;
+    uint32_t prot;
+} fcow_t;
+
+static fcow_t g_cow[FPROC_COW_MAX];
+static volatile int g_cow_lock;
+
+static uint64_t cow_lock(void)
+{
+    uint64_t flags = hal_irq_save();
+    hal_spin_lock(&g_cow_lock);
+    return flags;
+}
+
+static void cow_unlock(uint64_t flags)
+{
+    hal_spin_unlock(&g_cow_lock);
+    hal_irq_restore(flags);
+}
+
+static fcow_t *cow_find(uint64_t pa)
+{
+    for (uint32_t i = 0; i < FPROC_COW_MAX; i++) {
+        if (g_cow[i].prot && g_cow[i].pa == pa) {
+            return &g_cow[i];
+        }
+    }
+    return NULL;
+}
+
+uint32_t finte_cow_prot(uint64_t pa)
+{
+    uint64_t flags = cow_lock();
+    fcow_t *e = cow_find(pa);
+    uint32_t prot = e ? e->prot : 0;
+    cow_unlock(flags);
+    return prot;
+}
+
+int finte_cow_share(uint64_t pa, uint32_t prot)
+{
+    uint64_t flags = cow_lock();
+    fcow_t *e = cow_find(pa);
+    if (e) {
+        e->refs++;
+        cow_unlock(flags);
+        return 0;
+    }
+    for (uint32_t i = 0; i < FPROC_COW_MAX; i++) {
+        if (g_cow[i].prot == 0) {
+            g_cow[i].pa = pa;
+            g_cow[i].refs = 2; /* source space + clone */
+            g_cow[i].prot = prot;
+            cow_unlock(flags);
+            return 0;
+        }
+    }
+    cow_unlock(flags);
+    return -1;
+}
+
+/* Drop one mapping reference. Returns 1 when the caller should free the
+ * page, 0 while another space still maps it. */
+int finte_cow_put(uint64_t pa)
+{
+    uint64_t flags = cow_lock();
+    fcow_t *e = cow_find(pa);
+    if (!e) {
+        cow_unlock(flags);
+        return 1;
+    }
+    if (e->refs > 1) {
+        e->refs--;
+        cow_unlock(flags);
+        return 0;
+    }
+    finte_memset(e, 0, sizeof(*e));
+    cow_unlock(flags);
+    return 1;
+}
+
+int finte_as_has_page(faddr_space_t *as, uint64_t pa)
+{
+    if (!as) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < as->page_count; i++) {
+        if (as->pages[i] == pa) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int finte_as_share_page(faddr_space_t *as, uint64_t pa)
+{
+    if (!as || as->page_count >= FPROC_MAX_PAGES) {
+        return -1;
+    }
+    if (finte_as_has_page(as, pa)) {
+        return 0;
+    }
+    as->pages[as->page_count++] = pa;
+    return 0;
+}
+
+int finte_as_forget_page(faddr_space_t *as, uint64_t pa)
+{
+    if (!as) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < as->page_count; i++) {
+        if (as->pages[i] == pa) {
+            as->pages[i] = as->pages[as->page_count - 1u];
+            as->page_count--;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Resolve a write fault on a COW page. Returns 0 when the instruction can be
+ * retried, -1 when the fault is not a COW write and must kill the process. */
+int finte_as_cow_fault(faddr_space_t *as, uint64_t va, int write)
+{
+    if (!as || !write) {
+        return -1;
+    }
+    uint64_t page = va & ~0xFFFull;
+    uint64_t pa = finte_as_translate(as, page, 0);
+    if (!pa) {
+        return -1;
+    }
+    uint32_t prot = finte_cow_prot(pa);
+    if (!prot || !(prot & FPROC_PROT_WRITE)) {
+        return -1;
+    }
+
+    uint64_t flags = cow_lock();
+    fcow_t *e = cow_find(pa);
+    if (!e) {
+        cow_unlock(flags);
+        return -1;
+    }
+    uint32_t refs = e->refs;
+    if (refs == 1) {
+        /* Last mapping: upgrade the existing page in place. */
+        finte_memset(e, 0, sizeof(*e));
+        cow_unlock(flags);
+        if (finte_as_map(as, page, pa, prot) != 0) {
+            return -1;
+        }
+        finte_as_flush(as);
+        return 0;
+    }
+    cow_unlock(flags);
+
+    void *fresh = finte_as_alloc_page(as);
+    if (!fresh) {
+        return -1;
+    }
+    finte_memcpy(fresh, (const void *)(uintptr_t)pa, 4096);
+    if (finte_as_map(as, page, (uint64_t)(uintptr_t)fresh, prot) != 0) {
+        finte_as_free_page(as, fresh);
+        return -1;
+    }
+    finte_as_forget_page(as, pa);
+    if (finte_cow_put(pa)) {
+        hal_pages_free((void *)(uintptr_t)pa, 4096);
+    }
+    finte_as_flush(as);
+    return 0;
+}
 static faddr_space_t g_kernel_space;
 static int g_kernel_space_ready;
 static void proc_begin(void);
@@ -161,19 +342,21 @@ faddr_space_t *finte_as_clone(faddr_space_t *src)
     finte_memset(dst, 0, sizeof(*dst));
     dst->refs = 1;
     dst->ops = src->ops;
-    if (src->ops->space_create(dst) != 0 ||
-        src->ops->space_clone(dst, src) != 0) {
+    if (src->ops->space_create(dst) != 0) {
         if (dst->ops->space_destroy) {
             dst->ops->space_destroy(dst);
-        }
-        for (uint32_t i = 0; i < dst->page_count; i++) {
-            hal_pages_free((void *)(uintptr_t)dst->pages[i], 4096);
         }
         hal_pages_free(dst, AS_BYTES);
         return NULL;
     }
-    dst->kernel_root = src->kernel_root;
     __atomic_add_fetch(&g_live_spaces, 1, __ATOMIC_RELAXED);
+    if (src->ops->space_clone(dst, src) != 0) {
+        finte_as_unref(dst);
+        return NULL;
+    }
+    dst->kernel_root = src->kernel_root;
+    /* The clone made the source's writable pages read-only. */
+    finte_as_flush(src);
     return dst;
 }
 
@@ -202,7 +385,10 @@ void finte_as_unref(faddr_space_t *as)
         }
     }
     for (uint32_t i = 0; i < as->page_count; i++) {
-        hal_pages_free((void *)(uintptr_t)as->pages[i], 4096);
+        uint64_t pa = as->pages[i];
+        if (finte_cow_put(pa)) {
+            hal_pages_free((void *)(uintptr_t)pa, 4096);
+        }
     }
     as->page_count = 0;
     __atomic_sub_fetch(&g_live_spaces, 1, __ATOMIC_RELAXED);
@@ -233,7 +419,9 @@ void finte_as_free_page(faddr_space_t *as, void *page)
         if (as->pages[i] == pa) {
             as->pages[i] = as->pages[as->page_count - 1u];
             as->page_count--;
-            hal_pages_free(page, 4096);
+            if (finte_cow_put(pa)) {
+                hal_pages_free(page, 4096);
+            }
             return;
         }
     }
@@ -283,9 +471,18 @@ int finte_as_user_ok(faddr_space_t *as, uint64_t va, uint64_t len, int write)
         return 0;
     }
     for (uint64_t page = va & ~0xFFFull; page < va + len; page += 4096u) {
-        if (finte_as_translate(as, page, write) == 0) {
-            return 0;
+        uint64_t pa = finte_as_translate(as, page, write);
+        if (pa) {
+            continue;
         }
+        if (write) {
+            /* A present read-only COW page can be made writable on copy. */
+            uint64_t rpa = finte_as_translate(as, page, 0);
+            if (rpa && (finte_cow_prot(rpa) & FPROC_PROT_WRITE)) {
+                continue;
+            }
+        }
+        return 0;
     }
     return 1;
 }
@@ -764,6 +961,15 @@ static int proc_copy_out(faddr_space_t *as, uint64_t uva, const void *src,
     while (len) {
         uint64_t page = uva & ~0xFFFull;
         uint64_t pa = finte_as_translate(as, page, 1);
+        if (!pa) {
+            if (finte_as_cow_fault(as, page, 1) != 0) {
+                return -1;
+            }
+            pa = finte_as_translate(as, page, 1);
+            if (!pa) {
+                return -1;
+            }
+        }
         size_t off = (size_t)(uva - page);
         size_t chunk = 4096u - off;
         if (chunk > len) {
@@ -2107,6 +2313,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage fork done\n", 23);
     int wait_rc = finte_usermode_run("wait.elf");
     hal_console_write("[abi] stage wait done\n", 23);
+    int cow_rc = finte_usermode_run("cow.elf");
+    hal_console_write("[abi] stage cow done\n", 22);
     int exec_rc = finte_usermode_run("exec.elf");
     hal_console_write("[abi] stage exec done\n", 23);
     int sig_rc = proc_signal_test();
@@ -2144,11 +2352,12 @@ int finte_proc_abi_test(void)
 
     char buf[192];
     int n = finte_format(buf, sizeof(buf),
-                         "[abi] space=%s user=%s fork=%s wait=%s exec=%s "
-                         "signal=%s cap=%s service=%s bad=%s dyn=%s churn=%s "
-                         "blocked=%s\n",
+                         "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
+                         "exec=%s signal=%s cap=%s service=%s bad=%s dyn=%s "
+                         "churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
+                         ok_str(cow_rc == 0),
                          ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(cap_rc == 0),
                          ok_str(svc_rc == 0), ok_str(bad_rc == 0),
@@ -2159,7 +2368,7 @@ int finte_proc_abi_test(void)
     }
     hal_watchdog_resume();
     return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
-            exec_rc == 0 &&
+            cow_rc == 0 && exec_rc == 0 &&
             sig_rc == 0 && cap_rc == 0 && svc_rc == 0 && bad_rc == 0 &&
             dyn_rc == 0 && churn_rc == 0 && blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

@@ -197,6 +197,13 @@ void finte_as_switch(faddr_space_t *as);
 void finte_as_switch_kernel(void);
 void finte_as_flush(faddr_space_t *as);
 uint32_t finte_as_live_spaces(void);
+int finte_as_has_page(faddr_space_t *as, uint64_t pa);
+int finte_as_share_page(faddr_space_t *as, uint64_t pa);
+int finte_as_forget_page(faddr_space_t *as, uint64_t pa);
+uint32_t finte_cow_prot(uint64_t pa);
+int finte_cow_share(uint64_t pa, uint32_t prot);
+int finte_cow_put(uint64_t pa);
+int finte_as_cow_fault(faddr_space_t *as, uint64_t va, int write);
 
 fproc_t *finte_proc_create(const char *name, const char *elf, uint32_t pid,
                            uint64_t shared_phys, fhandle_t chan,

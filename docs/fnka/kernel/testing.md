@@ -43,7 +43,7 @@ make qemu-test            # BIOS boot and CLI checks
 make qemu-uefi-test       # UEFI/OVMF boot and CLI checks
 make qemu-disk-test       # BIOS + ATA PIO + lfc1/ext4/NTFS
 make qemu-uefi-disk-test  # UEFI + AHCI + filesystems
-make abi-test             # x86_64 1-CPU fd/mmap/fork/exec/signal/cap/churn
+make abi-test             # x86_64 1-CPU fd/mmap/cow-fork/waitpid/exec/signal/cap/churn
 make arm64-test           # arm64 4 CPUs: MMU/timer/SMP + EL0 user/procs/ABI + core checks
 make arm64-uefi-test      # same arm64 platform checks under AAVMF
 make arm64-disk-test      # arm64 virtio-mmio legacy + modern lfc1/ext4/NTFS
@@ -82,14 +82,14 @@ matrix.
 | Channel behavior | Passing | Passing | Core checks |
 | Arena mapping | Passing | Passing | Page-scoped arena caps on both user demos |
 | User-mode transition | Passing | Passing | x86 ring 3 `int 0x80`; arm64 EL0 `svc #0` |
-| Process ABI | Passing (1 CPU) | Passing (4 CPUs) | fd table, mmap, fork, waitpid, exec, SIGUSR1, cap transfer, service registry, ET_DYN load, churn, blocked abort |
+| Process ABI | Passing (1 CPU) | Passing (4 CPUs) | fd table, mmap, COW fork, waitpid, exec, SIGUSR1, cap transfer, service registry, ET_DYN load, churn, blocked abort |
 | Block storage | Passing | Passing | x86 ATA/AHCI; arm64 virtio-mmio legacy + modern |
 | ISO/IMG boot | Passing | Passing | Local checks and CI arm64 targets |
 
 ## 5. Current coverage gaps
 
 - No arm64 GICv3, ACPI/DTB or physical-hardware test.
-- No COW fork, `waitpid`, full POSIX signal set or file-backed mmap test.
+- No full POSIX signal set or file-backed mmap test.
 - x86_64 process ABI runs on one CPU; arm64 covers 4 CPUs. Simultaneous
   fork/sleep/migration is not stress-tested.
 - No virtio IRQ or queue-stress test; the arm64 block driver is polled.

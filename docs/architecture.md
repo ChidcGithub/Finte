@@ -584,8 +584,8 @@ The native user ABI is `int 0x80` with `rax` as the call number:
 private-data isolation, a 50 ms sleep, two CPU-bound tasks with a heartbeat, and
 a deliberate read of supervisor memory that kills only the offending process.
 
-Still missing: copy-on-write fork, full POSIX signals (only SIGUSR1 and
-SIGKILL), file-backed `mmap`, job control and a Linux-persona fd table.
+Still missing: full POSIX signals (only SIGUSR1 and SIGKILL), file-backed
+`mmap`, job control and a Linux-persona fd table.
 
 ## 13. HAL and portability
 

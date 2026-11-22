@@ -145,6 +145,13 @@ void arm64_sync_handler(uint64_t *frame)
          * instruction; do not advance ELR again. */
         return;
     }
+    if (from_el0 && ec == 0x24u && (esr & (1ull << 6))) {
+        fflow_t *f = finte_flow_current();
+        fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+        if (p && p->space && finte_as_cow_fault(p->space, far, 1) == 0) {
+            return; /* retry the write with the private page */
+        }
+    }
     if (from_el0 && (ec == 0x20u || ec == 0x21u || ec == 0x22u ||
                      ec == 0x24u || ec == 0x25u || ec == 0x26u ||
                      ec == 0x3Cu)) {

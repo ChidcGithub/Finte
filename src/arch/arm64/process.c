@@ -188,14 +188,27 @@ static int arm_space_clone(faddr_space_t *dst, faddr_space_t *src)
                           (uint64_t)l2i * 0x200000ull +
                           (uint64_t)i * 4096ull;
             uint64_t pa = pte & APTE_ADDR_MASK;
-            void *fresh = finte_as_alloc_page(dst);
-            if (!fresh) {
+            uint32_t pte_prot = prot_from_pte(pte);
+            if (!finte_as_has_page(src, pa)) {
+                if (finte_as_map(dst, va, pa, pte_prot) != 0) {
+                    return -1;
+                }
+                continue;
+            }
+            uint32_t prot = finte_cow_prot(pa);
+            if (!prot) {
+                prot = pte_prot;
+            }
+            uint32_t map_prot = prot & ~FPROC_PROT_WRITE;
+            if (finte_cow_share(pa, prot) != 0) {
                 return -1;
             }
-            finte_memcpy(fresh, (const void *)(uintptr_t)pa, 4096);
-            if (finte_as_map(dst, va, ptr_phys(fresh),
-                             prot_from_pte(pte)) != 0) {
-                finte_as_free_page(dst, fresh);
+            if (finte_as_share_page(dst, pa) != 0) {
+                (void)finte_cow_put(pa);
+                return -1;
+            }
+            if (finte_as_map(src, va, pa, map_prot) != 0 ||
+                finte_as_map(dst, va, pa, map_prot) != 0) {
                 return -1;
             }
         }

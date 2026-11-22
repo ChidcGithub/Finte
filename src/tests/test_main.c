@@ -853,11 +853,31 @@ static void test_process_space(void)
     CHECK((rwp & FPROC_PROT_WRITE) != 0);
     CHECK((rwp & FPROC_PROT_EXEC) == 0);
     CHECK(finte_as_translate(as, FPROC_USER_BASE + 4096u, 1) != 0);
+    *(uint64_t *)(uintptr_t)rw = 0x1122334455667788ull;
 
     faddr_space_t *clone = finte_as_clone(as);
     CHECK(clone != NULL);
     CHECK(finte_as_prot(clone, FPROC_USER_BASE) == rxp);
+    uint64_t rw_pa = finte_as_translate(as, FPROC_USER_BASE + 4096u, 0);
+    CHECK(rw_pa == (uint64_t)(uintptr_t)rw);
+    CHECK(finte_as_translate(clone, FPROC_USER_BASE + 4096u, 0) == rw_pa);
+    /* Both mappings are read-only and share the same physical page. */
+    CHECK(finte_as_translate(as, FPROC_USER_BASE + 4096u, 1) == 0);
+    CHECK(finte_as_translate(clone, FPROC_USER_BASE + 4096u, 1) == 0);
+    CHECK(*(uint64_t *)(uintptr_t)rw_pa == 0x1122334455667788ull);
+    /* The clone's write fault makes a private copy. */
+    CHECK(finte_as_cow_fault(clone, FPROC_USER_BASE + 4096u, 1) == 0);
+    uint64_t cow_pa = finte_as_translate(clone, FPROC_USER_BASE + 4096u, 0);
+    CHECK(cow_pa != 0 && cow_pa != rw_pa);
     CHECK(finte_as_translate(clone, FPROC_USER_BASE + 4096u, 1) != 0);
+    CHECK(*(uint64_t *)(uintptr_t)cow_pa == 0x1122334455667788ull);
+    *(uint64_t *)(uintptr_t)cow_pa = 0xDEADBEEFCAFEF00Dull;
+    CHECK(*(uint64_t *)(uintptr_t)rw_pa == 0x1122334455667788ull);
+    /* The parent is the last owner, so its fault upgrades in place. */
+    CHECK(finte_as_cow_fault(as, FPROC_USER_BASE + 4096u, 1) == 0);
+    CHECK(finte_as_translate(as, FPROC_USER_BASE + 4096u, 0) == rw_pa);
+    CHECK(finte_as_translate(as, FPROC_USER_BASE + 4096u, 1) != 0);
+    CHECK(*(uint64_t *)(uintptr_t)rw_pa == 0x1122334455667788ull);
     CHECK(finte_as_live_spaces() == 2);
     finte_as_unref(clone);
     CHECK(finte_as_live_spaces() == 1);

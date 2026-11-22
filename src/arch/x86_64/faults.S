@@ -59,14 +59,47 @@ ISR_ERR   30
 ISR_NOERR 31
 
 isr_common:
-    mov (%rsp), %rdi        /* vector */
-    mov 24(%rsp), %rsi      /* CS */
-    mov 16(%rsp), %rdx      /* RIP */
+    /* Preserve every GPR: a resolved COW write fault returns to user mode. */
+    push %rax
+    push %rbx
+    push %rcx
+    push %rdx
+    push %rsi
+    push %rdi
+    push %rbp
+    push %r8
+    push %r9
+    push %r10
+    push %r11
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    mov %rsp, %rbx          /* user rbx is saved above */
+    mov 120(%rsp), %rdi     /* vector */
+    mov 128(%rsp), %rsi     /* error code */
+    mov 136(%rsp), %rdx     /* RIP */
+    mov 144(%rsp), %rcx     /* CS */
     and $-16, %rsp
     call kx_fault_ex
-1:  cli
-    hlt
-    jmp 1b
+    mov %rbx, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %r11
+    pop %r10
+    pop %r9
+    pop %r8
+    pop %rbp
+    pop %rdi
+    pop %rsi
+    pop %rdx
+    pop %rcx
+    pop %rbx
+    pop %rax
+    add $16, %rsp           /* drop vector + error */
+    iretq
 
 .section .rodata
 .align 8
