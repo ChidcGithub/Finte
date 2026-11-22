@@ -56,22 +56,28 @@ static void pmm_boot_reserve(const fboot_info_t *bi)
     /* The x86 kernel runs on a 1 GiB identity map. Keep allocations below it
      * and above the BIOS/boot-data area. */
     if (pmm_init(bi, 0x1000000ull, 0x40000000ull) != 0) {
+        early_putc('a');
         return;
     }
+    early_putc('b');
     uint64_t kbase = FINTE_KERNEL_BASE;
     uint64_t kend = (uint64_t)(uintptr_t)__kernel_end;
     if (kend > kbase) {
         (void)pmm_reserve(kbase, (size_t)(kend - kbase));
     }
+    early_putc('c');
     (void)pmm_reserve((uint64_t)(uintptr_t)bi,
                       bi->total_size ? bi->total_size : sizeof(*bi));
+    early_putc('d');
     if (bi->ramdisk_size) {
         (void)pmm_reserve(bi->ramdisk_addr, bi->ramdisk_size);
     }
+    early_putc('e');
     if ((bi->flags & FINTE_BOOT_FLAG_MEMMAP) && bi->memmap_addr) {
         (void)pmm_reserve(bi->memmap_addr,
                           (size_t)bi->memmap_count * bi->memmap_desc_size);
     }
+    early_putc('f');
     if ((bi->flags & FINTE_BOOT_FLAG_MODULES) && bi->modules_addr) {
         (void)pmm_reserve(bi->modules_addr,
                           (size_t)bi->module_count * bi->module_desc_size);
@@ -81,6 +87,7 @@ static void pmm_boot_reserve(const fboot_info_t *bi)
             (void)pmm_reserve(mods[i].addr, (size_t)mods[i].size);
         }
     }
+    early_putc('g');
     if (bi->acpi_addr) {
         (void)pmm_reserve(bi->acpi_addr, 1u << 20);
     }
@@ -91,7 +98,9 @@ static void pmm_boot_reserve(const fboot_info_t *bi)
         (void)pmm_reserve(bi->fb_addr,
                           (size_t)bi->fb_pitch * bi->fb_height);
     }
+    early_putc('h');
     reserve_page_tables(read_cr3(), 4);
+    early_putc('i');
 }
 
 static void kputs(const char *s)
