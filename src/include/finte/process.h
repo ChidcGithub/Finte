@@ -62,6 +62,8 @@
 #define FPROC_SYS_SERVICE_UNREG 17
 #define FPROC_SYS_DYNSVC       18
 #define FPROC_SYS_GETPID       39
+#define FPROC_SYS_WAITPID      40
+#define FPROC_WNOHANG          1
 #define FPROC_SYS_EXIT         60
 #define FPROC_SYS_TIME         200
 #define FPROC_SYS_SLEEP        201
@@ -203,6 +205,8 @@ fproc_t *finte_proc_create(const char *name, const char *elf, uint32_t pid,
 int finte_proc_start(fproc_t *p);
 void finte_proc_destroy(fproc_t *p);
 fproc_t *finte_proc_find(uint32_t pid);
+int finte_proc_waitpid(fproc_t *p, uint32_t pid, uint64_t status_uva,
+                       int options);
 uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
                             uint64_t a2, void *frame);
 int finte_user_copy_in(fflow_t *f, void *dst, uint64_t uva, size_t len);

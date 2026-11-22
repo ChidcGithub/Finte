@@ -128,6 +128,12 @@ fret_t finte_flow_start(fhandle_t flow)
         finte_core_unlock();
         return finte_ret(FINTE_ERR_NOMEM, 0);
     }
+    /* Bind the user root before the first activation. The flow entry also
+     * sets this, but hal_ctx_switch needs it to bind the TSS stack and CR3
+     * on the very first switch into the flow. */
+    if (f->space) {
+        t->ctx->addr_space = finte_as_root(f->space);
+    }
     finte_node_ref(f->self); /* scheduler ownership */
     f->started = 1;
     f->state = FINTE_FLOW_READY;

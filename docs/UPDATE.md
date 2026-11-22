@@ -14,6 +14,10 @@ Short notes only. GitHub releases carry the per-commit changes.
 - Added the x86_64 `abi-test` and extended the arm64 boot tests with the shared
   process ABI suite, including a capability service registry and fixed-address
   ET_DYN shared-object loading.
+- Added blocking `waitpid` with child status and reaping. The first activation
+  of a user Flow now installs its address-space root before the switch, so
+  `hal_ctx_switch` binds the TSS stack and CR3 on the first entry instead of
+  leaving the flow on the previous stack.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

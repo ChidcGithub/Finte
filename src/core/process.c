@@ -1374,6 +1374,9 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
     if (nr == FPROC_SYS_GETPID) {
         return p ? p->pid : 1u;
     }
+    if (nr == FPROC_SYS_WAITPID) {
+        return (uint64_t)finte_proc_waitpid(p, (uint32_t)a0, a1, (int)a2);
+    }
     if (nr == FPROC_SYS_EXIT) {
         if (p && f) {
             finte_flow_exit(f, (int)a0);
@@ -1614,6 +1617,55 @@ uint64_t finte_proc_fork(fproc_t *parent, void *frame)
         return (uint64_t)-1;
     }
     return child->pid;
+}
+
+int finte_proc_waitpid(fproc_t *p, uint32_t pid, uint64_t status_uva,
+                       int options)
+{
+    if (!p || !p->space || !p->flow || (options & ~FPROC_WNOHANG)) {
+        return -1;
+    }
+    fproc_t *child = NULL;
+    for (fproc_t *c = p->children; c; c = c->next_sibling) {
+        if (pid == 0 || pid == (uint32_t)-1 || c->pid == pid) {
+            child = c;
+            break;
+        }
+    }
+    if (!child) {
+        return -1;
+    }
+    if (options & FPROC_WNOHANG) {
+        if (child->flow) {
+            return 0;
+        }
+    } else {
+        /* Block until the child's flow exits. Flow exit clears child->flow
+         * before waking waiters, and the process keeps the flow handle
+         * referenced, so the flow object cannot be recycled under us. */
+        while (child->flow) {
+            finte_flow_wait_for(p->flow, child->flow);
+        }
+    }
+    if (child->flow) {
+        return 0;
+    }
+    int status = child->faulted ? -1 : (int)child->exit_code;
+    if (status_uva != 0 &&
+        proc_copy_out(p->space, status_uva, &status, sizeof(status)) != 0) {
+        return -1;
+    }
+    fproc_t **link = &p->children;
+    while (*link && *link != child) {
+        link = &(*link)->next_sibling;
+    }
+    if (*link) {
+        *link = child->next_sibling;
+    }
+    child->next_sibling = NULL;
+    uint32_t reaped = child->pid;
+    finte_proc_destroy(child);
+    return (int)reaped;
 }
 
 static void proc_close_user_fds(fproc_t *p)
@@ -2053,6 +2105,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage fd/mmap done\n", 26);
     int fork_rc = finte_usermode_run("fork.elf");
     hal_console_write("[abi] stage fork done\n", 23);
+    int wait_rc = finte_usermode_run("wait.elf");
+    hal_console_write("[abi] stage wait done\n", 23);
     int exec_rc = finte_usermode_run("exec.elf");
     hal_console_write("[abi] stage exec done\n", 23);
     int sig_rc = proc_signal_test();
@@ -2090,10 +2144,12 @@ int finte_proc_abi_test(void)
 
     char buf[192];
     int n = finte_format(buf, sizeof(buf),
-                         "[abi] space=%s user=%s fork=%s exec=%s signal=%s "
-                         "cap=%s service=%s bad=%s dyn=%s churn=%s blocked=%s\n",
+                         "[abi] space=%s user=%s fork=%s wait=%s exec=%s "
+                         "signal=%s cap=%s service=%s bad=%s dyn=%s churn=%s "
+                         "blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
-                         ok_str(fork_rc == 0), ok_str(exec_rc == 0),
+                         ok_str(fork_rc == 0), ok_str(wait_rc == 0),
+                         ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(cap_rc == 0),
                          ok_str(svc_rc == 0), ok_str(bad_rc == 0),
                          ok_str(dyn_rc == 0), ok_str(churn_rc == 0),
@@ -2102,7 +2158,8 @@ int finte_proc_abi_test(void)
         hal_console_write(buf, (size_t)n);
     }
     hal_watchdog_resume();
-    return (space_ok && abi == 0 && fork_rc == 0 && exec_rc == 0 &&
+    return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
+            exec_rc == 0 &&
             sig_rc == 0 && cap_rc == 0 && svc_rc == 0 && bad_rc == 0 &&
             dyn_rc == 0 && churn_rc == 0 && blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

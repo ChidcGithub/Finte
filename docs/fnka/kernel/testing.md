@@ -82,7 +82,7 @@ matrix.
 | Channel behavior | Passing | Passing | Core checks |
 | Arena mapping | Passing | Passing | Page-scoped arena caps on both user demos |
 | User-mode transition | Passing | Passing | x86 ring 3 `int 0x80`; arm64 EL0 `svc #0` |
-| Process ABI | Passing (1 CPU) | Passing (4 CPUs) | fd table, mmap, fork, exec, SIGUSR1, cap transfer, service registry, ET_DYN load, churn, blocked abort |
+| Process ABI | Passing (1 CPU) | Passing (4 CPUs) | fd table, mmap, fork, waitpid, exec, SIGUSR1, cap transfer, service registry, ET_DYN load, churn, blocked abort |
 | Block storage | Passing | Passing | x86 ATA/AHCI; arm64 virtio-mmio legacy + modern |
 | ISO/IMG boot | Passing | Passing | Local checks and CI arm64 targets |
 
