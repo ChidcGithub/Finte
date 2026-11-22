@@ -24,7 +24,7 @@ run_once() {
         -drive if=floppy,format=raw,file=build/finte-bios.img -boot a \
         -display none -monitor none -no-reboot -snapshot \
         -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-        -serial stdio -D "$QEMULOG" -d guest_errors < "$FIFO" > "$LOG" 2>&1 &
+        -serial stdio -D "$QEMULOG" -d int,guest_errors < "$FIFO" > "$LOG" 2>&1 &
     local qpid=$!
     exec 3<>"$FIFO"  # open both ends so startup cannot block the script
 
@@ -81,7 +81,7 @@ run_once() {
             -accel tcg -drive if=floppy,format=raw,file=build/finte-bios.img -boot a \
             -display none -monitor none -no-reboot -snapshot \
             -serial "file:$PROBELOG" -D "$PROBELOG.qemu" \
-            -d guest_errors,cpu_reset >/dev/null 2>&1
+            -d int,guest_errors,cpu_reset >/dev/null 2>&1
         echo "foreground boot probe status: $?"
         if [ -s "$PROBELOG" ]; then
             echo "--- foreground boot output ---"
@@ -90,7 +90,7 @@ run_once() {
         fi
         if [ -s "$PROBELOG.qemu" ]; then
             echo "--- foreground QEMU log ---"
-            head -40 "$PROBELOG.qemu" | tr -d '\000'
+            tail -80 "$PROBELOG.qemu" | tr -d '\000'
         fi
         if [ -s "$QEMULOG" ]; then
             echo "--- QEMU internal log ---"
