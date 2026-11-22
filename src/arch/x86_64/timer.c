@@ -36,9 +36,10 @@ void timer_init(void)
     __asm__ volatile("sti");
 }
 
-void timer_irq(void)
+void timer_irq(uint64_t *frame)
 {
     fcpu_t *cpu = hal_cpu_self();
+    int from_user = frame && ((frame[16] & 3u) == 3u);
     if (cpu && cpu->timer_mode) {
         smp_lapic_eoi();
         if (cpu->timer_mode == FINTE_TIMER_ONESHOT && cpu->current) {
@@ -53,9 +54,14 @@ void timer_irq(void)
     }
     finte_sched_tick();
     finte_proc_timer_tick();
+    finte_proc_cpu_tick(10000000ull, from_user);
     fflow_t *f = cpu ? cpu->current : NULL;
     if (f && f->state == FINTE_FLOW_RUNNING && finte_sched_active() &&
         finte_sched_cpu_has_work()) {
         finte_sched_preempt(f);
+    }
+    if (from_user && f && f->user &&
+        finte_proc_signal_pending((fproc_t *)f->user)) {
+        finte_process_signal_check((fproc_t *)f->user, frame);
     }
 }

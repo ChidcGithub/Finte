@@ -101,6 +101,8 @@
 #define FPROC_SIGCHLD          17
 #define FPROC_SIGCONT          18
 #define FPROC_SIGSTOP          19
+#define FPROC_SIGVTALRM        26
+#define FPROC_SIGPROF          27
 #define FPROC_SYS_SIGPROCMASK  41
 #define FPROC_SYS_SETPGID      42
 #define FPROC_SYS_GETPGRP      43
@@ -171,6 +173,10 @@ struct fproc {
     uint8_t cont_pending;
     uint64_t timer_expire_ns;   /* absolute; 0 = disarmed */
     uint64_t timer_interval_ns; /* 0 = one-shot */
+    uint64_t vtimer_left_ns;    /* ITIMER_VIRTUAL remaining CPU time */
+    uint64_t vtimer_interval_ns;
+    uint64_t ptimer_left_ns;    /* ITIMER_PROF remaining CPU time */
+    uint64_t ptimer_interval_ns;
     char name[FINTE_NAME_MAX];
     ffd_t *fds;
     uint32_t fd_capacity;
@@ -256,7 +262,9 @@ int finte_user_copy_in(fflow_t *f, void *dst, uint64_t uva, size_t len);
 int finte_user_copy_out(fflow_t *f, uint64_t uva, const void *src, size_t len);
 void finte_user_fault(uint64_t vec, uint64_t rip, uint64_t cr2);
 void finte_process_signal_check(fproc_t *p, void *frame);
+int finte_proc_signal_pending(const fproc_t *p);
 void finte_proc_timer_tick(void);
+void finte_proc_cpu_tick(uint64_t ns, int user);
 int finte_usermode_run(const char *name);
 int finte_proc_demo(void);
 int finte_proc_abi_test(void);

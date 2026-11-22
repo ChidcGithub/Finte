@@ -108,17 +108,25 @@ static void arm64_timer_irq(void)
 
 void arm64_irq_handler(uint64_t *frame)
 {
-    (void)frame;
     if (g_gic_version != 2) {
         return;
     }
     uint32_t iar = gic_ack();
     uint32_t irq = iar & 0x3FFu;
+    int from_el0 = (frame[FRAME_SPSR] & 0xFu) == 0;
     if (irq < 1020u) {
         gic_eoi(iar);
     }
     if (irq == GIC_IRQ_TIMER) {
         arm64_timer_irq();
+        finte_proc_cpu_tick(10000000ull, from_el0);
+        if (from_el0) {
+            fflow_t *f = finte_flow_current();
+            fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+            if (p && finte_proc_signal_pending(p)) {
+                finte_process_signal_check(p, frame);
+            }
+        }
     }
 }
 

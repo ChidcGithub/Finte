@@ -224,8 +224,8 @@ The target contract requires:
 - `make arm64-disk-test`: virtio-mmio lfc1/ext4/NTFS reads (legacy + modern).
 - `make abi-test`: x86_64 dynamic fd table with dup/dup2/fcntl and shared
   open-file descriptions, anonymous and file-backed mmap, COW fork,
-  waitpid, exec, signal sets, job control, process groups, SIGALRM timers,
-  cap transfer, churn, blocked-flow abort and RX/RW-NX PTE checks.
+  waitpid, exec, signal sets, job control, process groups, SIGALRM/CPU-time
+  timers, cap transfer, churn, blocked-flow abort and RX/RW-NX PTE checks.
 - `make arm64-test`: the same shared ABI suite on 4 CPUs plus the EL0/procs
   demos and Flow-owned space release.
 - No shared-address-space TLB shootdown or reclaim test yet.

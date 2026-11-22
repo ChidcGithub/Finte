@@ -5,6 +5,6 @@
 
 extern volatile uint64_t timer_ticks;
 void timer_init(void);
-void timer_irq(void);
+void timer_irq(uint64_t *frame);
 
 #endif

@@ -20,6 +20,7 @@ timer_isr:
     push %r13
     push %r14
     push %r15
+    mov %rsp, %rdi
     call timer_irq
     pop %r15
     pop %r14

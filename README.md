@@ -35,7 +35,7 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 - **Native CAS**: `cas` parses polynomial expressions with exact rational coefficients and simplifies, differentiates (`cas diff`) or evaluates (`cas eval`) them entirely in the kernel — no external tools, no floating point.
 - **Startup performance**: the GOP console draws glyphs with packed 64-bit stores and skips clearing rows that are already blank. With serial disabled, the BIOS path reaches the shell in about 0.8 seconds; UEFI wall time is dominated by OVMF firmware.
 - **Isolated user processes**: `user`, `procs` and `services` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code, data and page-scoped arena window; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, page-level arena caps, and process-kill on a kernel-memory fault. The same demo now runs on x86_64 ring 3 (`int 0x80`) and arm64 EL0 (`svc #0`).
-- **Shared process core**: ELF loading, user-copy validation, syscall dispatch, fault policy, dynamic per-process fd tables with shared open-file descriptions, `dup`/`dup2`/`fcntl(F_DUPFD)`, `mmap`/`munmap` (anonymous and file-backed private), copy-on-write `fork`, `waitpid` with child reaping, `exec`, signal masks, pending sets, default actions, SIGSTOP/SIGCONT job control, process groups with `setpgid`/`getpgrp` and group `kill`/`waitpid`, SIGALRM interval timers (`alarm`/`setitimer`/`getitimer`), user-to-user cap transfer, a capability-based service registry, fixed-address ET_DYN shared-object loading and the `init`/`procs` orchestration live in `src/core/process.c`; x86_64 and arm64 keep only page-table, root-switch, trap-frame and EL0/ring-3 entry backends.
+- **Shared process core**: ELF loading, user-copy validation, syscall dispatch, fault policy, dynamic per-process fd tables with shared open-file descriptions, `dup`/`dup2`/`fcntl(F_DUPFD)`, `mmap`/`munmap` (anonymous and file-backed private), copy-on-write `fork`, `waitpid` with child reaping, `exec`, signal masks, pending sets, default actions, SIGSTOP/SIGCONT job control, process groups with `setpgid`/`getpgrp` and group `kill`/`waitpid`, SIGALRM and CPU-time interval timers (`alarm`/`setitimer`/`getitimer`), user-to-user cap transfer, a capability-based service registry, fixed-address ET_DYN shared-object loading and the `init`/`procs` orchestration live in `src/core/process.c`; x86_64 and arm64 keep only page-table, root-switch, trap-frame and EL0/ring-3 entry backends.
 - **Flow-owned address spaces**: a refcounted `faddr_space_t` is owned by the Flow. Flow exit queues it for release after switching to the scheduler root, so page tables are freed even if the caller forgets `proc_destroy()`. arm64 uses per-process ASIDs and ASID/TLB invalidation; x86_64 relies on non-global user PTEs and CR3 reload on every root switch. User pages are RX/RW-NX with read-only code mappings.
 - **3-strike watchdog**: unexpected user faults, scheduler deadlocks and disk-sync failures add a strike. On the third, the kernel prints a red panic and powers off. `selfcheck` and the expected `procs` fault are excluded. `watchdog` shows the state, `watchdog test` injects a strike, and `watchdog reset` clears it.
 - **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; the arm64 QEMU `virt` backend has MMU/page tables, exception vectors, GICv2, the generic timer IRQ, PSCI CPU_ON, per-CPU state, EL0 processes with `svc #0`, and a legacy/modern virtio-mmio block driver. `make arm64-test` runs 4 CPUs, the 147 core checks, MMU/timer/SMP probes, per-CPU flow distribution, `init.elf` at EL0 and the full `procs` IPC demo. `make arm64-uefi-test` runs the same platform checks under AAVMF; `make arm64-disk-test` and `make arm64-uefi-disk-test` mount lfc1/ext4/NTFS over virtio.
@@ -87,7 +87,7 @@ make demo           # host-side native pipeline
 make compat         # host-side Linux persona
 make bench          # host microbenchmarks
 make arm64          # arm64 QEMU virt kernel (build/finte-arm64.elf)
-make abi-test       # x86_64 process ABI (fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/fdtab/cap/churn)
+make abi-test       # x86_64 process ABI (fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/cap/churn)
 make arm64-test     # 4-CPU MMU/timer/SMP + EL0 user/procs/ABI + 147 core checks
 make arm64-uefi-test # same platform checks through AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
@@ -493,9 +493,9 @@ The performance argument is structural: handles are direct indexes, capability c
   x86_64 and arm64 process ABI suites (fd table with dup/dup2/fcntl and shared
   open-file descriptions, mmap, file-backed mmap,
   COW fork, waitpid, exec, signals/sigset, job control, process groups,
-  SIGALRM timers, cap transfer, service registry, dynamic shared-object load,
-  churn and blocked-flow abort), arm64 EL0 user/procs tests, and arm64 virtio
-  disk tests.
+  SIGALRM and CPU-time timers, cap transfer, service registry,
+  dynamic shared-object load, churn and blocked-flow abort), arm64 EL0
+  user/procs tests, and arm64 virtio disk tests.
 
 **Deliberately not here yet**
 
@@ -504,14 +504,13 @@ The performance argument is structural: handles are direct indexes, capability c
   private `mmap`/`munmap`, signal masks, pending sets,
   SIGUSR1/SIGUSR2/SIGCHLD handlers, default SIGTERM/SIGINT/SIGSEGV actions,
   SIGSTOP/SIGCONT job control with process groups, `setpgid`/`getpgrp`,
-  group `kill(-pgid)`/`waitpid(-pgid)`, `waitpid` WUNTRACED/WCONTINUED
-  reporting and SIGALRM interval timers (`alarm`/`setitimer`/`getitimer`),
+  group `kill`/`waitpid`, SIGALRM and CPU-time interval timers
+  (`alarm`/`setitimer`/`getitimer`, ITIMER_REAL/VIRTUAL/PROF),
   plus user-to-user cap transfer are in place. The fd table grows to 256
   descriptors, dups and fork children share open-file descriptions with
   refcounted offsets, `fcntl(F_DUPFD)` is supported, file descriptors no
   longer consume capability slots, and exec preserves descriptors except those
-  marked `FD_CLOEXEC`. Mappings are capped at 64 pages and CPU-time timers
-  (ITIMER_VIRTUAL/PROF) are absent.
+  marked `FD_CLOEXEC`. Mappings are capped at 64 pages.
 - **SMP fork/sleep stress.** The x86 process ABI suite is pinned to the BSP and
   the arm64 suite runs 4 CPUs. Simultaneous fork + sleep + migration is not yet
   a claimed stress-tested configuration.

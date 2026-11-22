@@ -1529,6 +1529,22 @@ void finte_user_fault(uint64_t vec, uint64_t rip, uint64_t cr2)
 
 static void proc_timer_poll(fproc_t *p);
 
+int finte_proc_signal_pending(const fproc_t *p)
+{
+    if (!p) {
+        return 0;
+    }
+    if (p->killed || p->stopped) {
+        return 1;
+    }
+    for (uint32_t i = 1; i < FPROC_MAX_SIGNALS; i++) {
+        if (p->sigs[i].pending) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* Run pending signals on the way back to user mode. The arch frame remains
  * owned by the trap handler; this only mutates it. */
 void finte_process_signal_check(fproc_t *p, void *frame)
@@ -1548,8 +1564,7 @@ void finte_process_signal_check(fproc_t *p, void *frame)
             break;
         }
         finte_flow_stop(p->flow);
-    }
-    const fproc_arch_ops_t *ops = fproc_arch();
+    }    const fproc_arch_ops_t *ops = fproc_arch();
     if (!ops->frame_size || !ops->signal_setup) {
         return;
     }
@@ -1934,38 +1949,50 @@ static int proc_timeval_ns(const proc_timeval_t *tv, uint64_t *out)
     return 0;
 }
 
-static void proc_timer_snapshot(fproc_t *p, proc_itimerval_t *out)
+static void proc_timer_snapshot(fproc_t *p, uint64_t which,
+                                proc_itimerval_t *out)
 {
     finte_memset(out, 0, sizeof(*out));
-    uint64_t now = hal_now_ns();
-    uint64_t flags = proc_lock();
-    uint64_t expire = p ? p->timer_expire_ns : 0;
-    uint64_t interval = p ? p->timer_interval_ns : 0;
-    proc_unlock(flags);
-    if (expire) {
-        uint64_t delta = expire > now ? expire - now : 0;
-        uint64_t us = (delta + 999ull) / 1000ull;
-        out->value.tv_sec = (int64_t)(us / 1000000ull);
-        out->value.tv_usec = (int64_t)(us % 1000000ull);
+    if (!p || which > 2) {
+        return;
     }
+    uint64_t now = hal_now_ns();
+    uint64_t left = 0;
+    uint64_t interval = 0;
+    uint64_t flags = proc_lock();
+    if (which == 0) {
+        uint64_t expire = p->timer_expire_ns;
+        interval = p->timer_interval_ns;
+        left = expire > now ? expire - now : 0;
+    } else if (which == 1) {
+        left = p->vtimer_left_ns;
+        interval = p->vtimer_interval_ns;
+    } else {
+        left = p->ptimer_left_ns;
+        interval = p->ptimer_interval_ns;
+    }
+    proc_unlock(flags);
+    uint64_t us = (left + 999ull) / 1000ull;
+    out->value.tv_sec = (int64_t)(us / 1000000ull);
+    out->value.tv_usec = (int64_t)(us % 1000000ull);
     out->interval.tv_sec = (int64_t)(interval / 1000000000ull);
     out->interval.tv_usec = (int64_t)((interval % 1000000000ull) / 1000ull);
 }
 
 static int sys_getitimer(fproc_t *p, uint64_t which, uint64_t old_uva)
 {
-    if (!p || !p->space || which != 0 || old_uva == 0) {
+    if (!p || !p->space || which > 2 || old_uva == 0) {
         return -1;
     }
     proc_itimerval_t old;
-    proc_timer_snapshot(p, &old);
+    proc_timer_snapshot(p, which, &old);
     return proc_copy_out(p->space, old_uva, &old, sizeof(old));
 }
 
 static int sys_setitimer(fproc_t *p, uint64_t which, uint64_t new_uva,
                          uint64_t old_uva)
 {
-    if (!p || !p->space || which != 0) {
+    if (!p || !p->space || which > 2) {
         return -1;
     }
     proc_itimerval_t nv;
@@ -1980,7 +2007,7 @@ static int sys_setitimer(fproc_t *p, uint64_t which, uint64_t new_uva,
     }
     if (old_uva != 0) {
         proc_itimerval_t old;
-        proc_timer_snapshot(p, &old);
+        proc_timer_snapshot(p, which, &old);
         if (proc_copy_out(p->space, old_uva, &old, sizeof(old)) != 0) {
             return -1;
         }
@@ -1990,12 +2017,20 @@ static int sys_setitimer(fproc_t *p, uint64_t which, uint64_t new_uva,
         value = ~0ull - now;
     }
     uint64_t flags = proc_lock();
-    if (value) {
-        p->timer_expire_ns = now + value;
-        p->timer_interval_ns = interval;
+    if (which == 0) {
+        if (value) {
+            p->timer_expire_ns = now + value;
+            p->timer_interval_ns = interval;
+        } else {
+            p->timer_expire_ns = 0;
+            p->timer_interval_ns = 0;
+        }
+    } else if (which == 1) {
+        p->vtimer_left_ns = value;
+        p->vtimer_interval_ns = value ? interval : 0;
     } else {
-        p->timer_expire_ns = 0;
-        p->timer_interval_ns = 0;
+        p->ptimer_left_ns = value;
+        p->ptimer_interval_ns = value ? interval : 0;
     }
     proc_unlock(flags);
     return 0;
@@ -2070,6 +2105,39 @@ void finte_proc_timer_tick(void)
             finte_sched_wake_thread(fired[i]->flow->thread);
         }
     }
+}
+
+/* Charge one timer quantum of CPU time to the current process. Virtual time
+ * accrues only while the interrupted context is user mode; prof time also
+ * includes kernel/syscall time. */
+void finte_proc_cpu_tick(uint64_t ns, int user)
+{
+    if (ns == 0) {
+        return;
+    }
+    fflow_t *f = finte_flow_current();
+    fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+    if (!p) {
+        return;
+    }
+    uint64_t flags = proc_lock();
+    if (user && p->vtimer_left_ns) {
+        if (ns >= p->vtimer_left_ns) {
+            p->sigs[FPROC_SIGVTALRM].pending = 1;
+            p->vtimer_left_ns = p->vtimer_interval_ns;
+        } else {
+            p->vtimer_left_ns -= ns;
+        }
+    }
+    if (p->ptimer_left_ns) {
+        if (ns >= p->ptimer_left_ns) {
+            p->sigs[FPROC_SIGPROF].pending = 1;
+            p->ptimer_left_ns = p->ptimer_interval_ns;
+        } else {
+            p->ptimer_left_ns -= ns;
+        }
+    }
+    proc_unlock(flags);
 }
 
 static uint64_t sys_sigprocmask(fproc_t *p, uint64_t how, uint64_t mask)
@@ -3099,6 +3167,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage pgroup done\n", 25);
     int alarm_rc = finte_usermode_run("alarm.elf");
     hal_console_write("[abi] stage alarm done\n", 24);
+    int cputime_rc = finte_usermode_run("cputimer.elf");
+    hal_console_write("[abi] stage cputime done\n", 26);
     int fdtab_rc = finte_usermode_run("fdtab.elf");
     hal_console_write("[abi] stage fdtab done\n", 24);
     int cap_rc = proc_cap_test();
@@ -3136,16 +3206,17 @@ int finte_proc_abi_test(void)
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
                          "filemap=%s exec=%s signal=%s sigset=%s job=%s "
-                         "pgroup=%s alarm=%s fdtab=%s cap=%s service=%s "
-                         "bad=%s dyn=%s churn=%s blocked=%s\n",
+                         "pgroup=%s alarm=%s cputime=%s fdtab=%s cap=%s "
+                         "service=%s bad=%s dyn=%s churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
                          ok_str(cow_rc == 0), ok_str(filemap_rc == 0),
                          ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(sigset_rc == 0),
                          ok_str(job_rc == 0), ok_str(pgroup_rc == 0),
-                         ok_str(alarm_rc == 0), ok_str(fdtab_rc == 0),
-                         ok_str(cap_rc == 0), ok_str(svc_rc == 0),
+                         ok_str(alarm_rc == 0), ok_str(cputime_rc == 0),
+                         ok_str(fdtab_rc == 0), ok_str(cap_rc == 0),
+                         ok_str(svc_rc == 0),
                          ok_str(bad_rc == 0), ok_str(dyn_rc == 0),
                          ok_str(churn_rc == 0), ok_str(blocked_ok));
     if (n > 0) {
@@ -3155,8 +3226,8 @@ int finte_proc_abi_test(void)
     return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
             cow_rc == 0 && filemap_rc == 0 && exec_rc == 0 &&
             sig_rc == 0 && sigset_rc == 0 && job_rc == 0 &&
-            pgroup_rc == 0 && alarm_rc == 0 && fdtab_rc == 0 &&
-            cap_rc == 0 && svc_rc == 0 &&
+            pgroup_rc == 0 && alarm_rc == 0 && cputime_rc == 0 &&
+            fdtab_rc == 0 && cap_rc == 0 && svc_rc == 0 &&
             bad_rc == 0 && dyn_rc == 0 && churn_rc == 0 &&
             blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

@@ -84,7 +84,7 @@ Flow Group is an optional organization layer:
 | Boot handoff | Implemented | Parse ACPI/DTB in platform services | `boot.h`, `bootinfo.c`, three producers; PMM consumes the map |
 | Kernel/user boundary | Partial | Small kernel, isolated drivers/services | `src/core/process.c` + x86/arm64 arch backends |
 | Driver framework | Partial | Hybrid kernel/user drivers | in-kernel block/filesystem code |
-| Native ABI | Partial | Stable Finte ABI and native libc | verb ABI; dynamic fd table with dup/dup2/fcntl and shared open-file descriptions, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, SIGALRM timers, cap transfer, service registry and ET_DYN load on both arches |
+| Native ABI | Partial | Stable Finte ABI and native libc | verb ABI; dynamic fd table with dup/dup2/fcntl and shared open-file descriptions, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, SIGALRM and CPU-time timers, cap transfer, service registry and ET_DYN load on both arches |
 | Security model | Partial | Capability revocation, DMA isolation, measured TCB | this directory |
 | Tests | Partial | Full cross-architecture semantic matrix | 24 host, x86 BIOS/UEFI/disk + 1-CPU ABI, arm64 MMU/timer/SMP/user/ABI/disk direct + UEFI |
 
@@ -134,9 +134,8 @@ system:
   anonymous mappings are capped, signal masks/pending sets cover
   SIGUSR1/2/SIGCHLD, default TERM/INT/SEGV and basic SIGSTOP/SIGCONT job
   control, `setpgid`/`getpgrp` back process groups for group `kill` and
-  `waitpid`, SIGALRM supports `alarm`/`setitimer`/`getitimer`, and the fd
-  table is dynamic with shared open-file descriptions, but CPU-time
-  timers are absent. arm64
+  `waitpid`, SIGALRM, SIGVTALRM and SIGPROF timers work, and the fd
+  table is dynamic with shared open-file descriptions. arm64
   still lacks ACPI/DTB parsing and GICv3; static-heap fallback remains for
   direct `-kernel` boot.
 - **The Linux persona is experimental.** It demonstrates syscall translation

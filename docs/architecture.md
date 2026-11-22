@@ -145,8 +145,8 @@ The core flow model does not create an implicit process tree:
   descriptions, `dup`/`dup2`/`fcntl(F_DUPFD)`, anonymous and file-backed
   private `mmap`, signal masks/pending sets/default actions,
   SIGSTOP/SIGCONT job control, process groups with `setpgid`/`getpgrp` and
-  group `kill`/`waitpid`, SIGALRM timers via `alarm`/`setitimer`/`getitimer`,
-  and SIGUSR1 delivery for demo processes. Fork
+  group `kill`/`waitpid`, SIGALRM and CPU-time timers via
+  `alarm`/`setitimer`/`getitimer`, and SIGUSR1 delivery for demo processes. Fork
   copies the address space and descriptor table while sharing open-file
   descriptions; it is not a global Unix process tree.
 - The program image is still immutable; `exec` replaces the user space with a
@@ -589,7 +589,7 @@ The native user ABI is `int 0x80` with `rax` as the call number:
 private-data isolation, a 50 ms sleep, two CPU-bound tasks with a heartbeat, and
 a deliberate read of supervisor memory that kills only the offending process.
 
-Still missing: CPU-time timers (ITIMER_VIRTUAL/PROF) and demand paging.
+Still missing: demand paging and swap.
 
 ## 13. HAL and portability
 

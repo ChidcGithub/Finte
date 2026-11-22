@@ -64,6 +64,13 @@ Short notes only. GitHub releases carry the per-commit changes.
   harness now mounts the lfc1 test disk, and `fdtab.elf` creates and opens 80
   independent disk files (`[fdtab] disk=OK`), beyond both the old 32-slot cap
   limit and the old 64-file table.
+- Added ITIMER_VIRTUAL and ITIMER_PROF. The timer IRQ charges 10 ms to the
+  current process, with virtual time only when the interrupted context is user
+  mode and prof time in both user and kernel. Expiry raises SIGVTALRM/SIGPROF,
+  reloads the interval or disarms, and the timer IRQ now delivers pending
+  signals immediately so a CPU-bound loop is interrupted without syscalls.
+  `cputimer.elf` checks CPU-vs-wall semantics, a pure spin loop, repeated
+  intervals and invalid selectors; the ABI line reports `cputime=OK`.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.
