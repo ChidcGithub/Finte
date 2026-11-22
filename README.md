@@ -57,7 +57,9 @@ On Windows, the kernel build uses WSL because it needs a Linux linker and QEMU:
 .\build.ps1 -Target all           # host simulator + build/finte.img
 .\build.ps1 -Target test
 .\build.ps1 -Target selfcheck
-.\build.ps1 -Target qemu          # BIOS boot, serial console
+.\build.ps1 -Target qemu          # headless BIOS boot, serial in this console
+.\build.ps1 -Target gui           # windowed UEFI QEMU
+.\build.ps1 -Target gui-bios      # windowed BIOS QEMU
 .\build.ps1 -Target qemu-uefi-test
 ```
 

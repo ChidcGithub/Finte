@@ -79,6 +79,9 @@ Windows.
 .\build.ps1 -Target all
 .\build.ps1 -Target image
 .\build.ps1 -Target test
+.\build.ps1 -Target qemu          # headless serial console
+.\build.ps1 -Target gui           # windowed UEFI
+.\build.ps1 -Target gui-bios      # windowed BIOS
 .\build.ps1 -Target qemu-test
 .\build.ps1 -Target qemu-uefi-test
 ```
