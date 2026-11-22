@@ -45,12 +45,12 @@ run_direct() {
             extra="-global virtio-mmio.force-legacy=false"
         fi
         timeout 60 "$QEMU" -M virt -cpu cortex-a57 -m 256M -smp 4 \
-            -nographic -monitor none -no-reboot $extra \
+            -nographic -monitor none -no-reboot -snapshot $extra \
             -kernel build/finte-arm64.elf \
-            -drive if=none,id=hd0,format=raw,file="$IMG" \
-            -device virtio-blk-device,drive=hd0 \
             -drive if=none,id=hd1,format=raw,file=build/swap.img \
-            -device virtio-blk-device,drive=hd1 > "$log" 2>&1 || true
+            -device virtio-blk-device,drive=hd1 \
+            -drive if=none,id=hd0,format=raw,file="$IMG" \
+            -device virtio-blk-device,drive=hd0 > "$log" 2>&1 || true
         check_log "$log" "$mode" || exit 1
     done
 }
@@ -66,14 +66,14 @@ run_uefi() {
     log=build/arm64-uefi-disk.log
     rm -f "$log"
     timeout 90 "$QEMU" -M virt -cpu cortex-a57 -m 512M -smp 4 \
-        -nographic -monitor none -no-reboot \
+        -nographic -monitor none -no-reboot -snapshot \
         -drive if=pflash,format=raw,unit=0,file="$code",readonly=on \
         -drive if=pflash,format=raw,unit=1,file=build/AAVMF_VARS_DISK.fd \
         -cdrom build/finte-arm64.iso \
-        -drive if=none,id=hd0,format=raw,file="$IMG" \
-        -device virtio-blk-device,drive=hd0 \
         -drive if=none,id=hd1,format=raw,file=build/swap.img \
-        -device virtio-blk-device,drive=hd1 > "$log" 2>&1 || true
+        -device virtio-blk-device,drive=hd1 \
+        -drive if=none,id=hd0,format=raw,file="$IMG" \
+        -device virtio-blk-device,drive=hd0 > "$log" 2>&1 || true
     check_log "$log" uefi || exit 1
 }
 

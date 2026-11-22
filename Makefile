@@ -133,11 +133,11 @@ $(BUILD)/finte-arm64.elf: $(ARM64_OBJ) src/arch/arm64/kernel.ld
 arm64-test: arm64 $(BUILD)/disk-test.img $(BUILD)/swap.img
 	@rm -f $(BUILD)/arm64.log
 	timeout 40 $(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 4 \
-	  -nographic -monitor none -no-reboot \
-	  -drive if=none,id=hd0,format=raw,file=$(BUILD)/disk-test.img \
-	  -device virtio-blk-device,drive=hd0 \
+	  -nographic -monitor none -no-reboot -snapshot \
 	  -drive if=none,id=hd1,format=raw,file=$(BUILD)/swap.img \
 	  -device virtio-blk-device,drive=hd1 \
+	  -drive if=none,id=hd0,format=raw,file=$(BUILD)/disk-test.img \
+	  -device virtio-blk-device,drive=hd0 \
 	  -kernel $(BUILD)/finte-arm64.elf > $(BUILD)/arm64.log 2>&1 || true
 	@if grep -q "arm64 self-check: PASS" $(BUILD)/arm64.log && \
 	    grep -Eq "mmu: (39|48)-bit identity map enabled" $(BUILD)/arm64.log && \

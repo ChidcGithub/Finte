@@ -15,13 +15,13 @@ cp "$VARS_SRC" build/AAVMF_VARS_TEST.fd
 LOG=build/arm64-uefi.log
 rm -f "$LOG"
 timeout 60 qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -smp 4 \
-    -nographic -monitor none -no-reboot \
+    -nographic -monitor none -no-reboot -snapshot \
     -drive if=pflash,format=raw,unit=0,file="$CODE",readonly=on \
     -drive if=pflash,format=raw,unit=1,file=build/AAVMF_VARS_TEST.fd \
-    -drive if=none,id=hd0,format=raw,file=build/disk-test.img \
-    -device virtio-blk-device,drive=hd0 \
     -drive if=none,id=hd1,format=raw,file=build/swap.img \
     -device virtio-blk-device,drive=hd1 \
+    -drive if=none,id=hd0,format=raw,file=build/disk-test.img \
+    -device virtio-blk-device,drive=hd0 \
     -cdrom build/finte-arm64.iso > "$LOG" 2>&1 || true
 
 ok=1
