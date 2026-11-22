@@ -23,14 +23,16 @@ $(shell mkdir -p $(BUILD))
 VERSION_HEADER := $(BUILD)/finte_version.h
 
 HOST_CFLAGS ?= -std=c11 -O2 -g -Wall -Wextra -Isrc/include -I$(BUILD)
-KCFLAGS := -m64 -std=c11 -O2 -g -ffreestanding -fno-builtin -fno-pic -fno-pie \
+KCFLAGS := -m64 -march=x86-64 -mtune=generic -std=c11 -O2 -g -ffreestanding \
+           -fno-builtin -fno-pic -fno-pie \
            -fno-stack-protector -mno-red-zone -mno-sse -mno-sse2 \
            -mgeneral-regs-only -Wall -Wextra -Isrc/include -I$(BUILD)
 UEFI_CFLAGS := -target x86_64-pc-windows-msvc -c -ffreestanding \
                -fno-stack-protector -Isrc/include
 UEFI_ARM64_CFLAGS := -target aarch64-pc-windows-msvc -c -ffreestanding \
                      -fno-stack-protector -Isrc/include
-USER_CFLAGS := -m64 -std=c11 -O2 -ffreestanding -fno-builtin -fno-pic \
+USER_CFLAGS := -m64 -march=x86-64 -mtune=generic -std=c11 -O2 -ffreestanding \
+               -fno-builtin -fno-pic \
                -fno-pie -fno-stack-protector -mno-red-zone -mno-sse -mno-sse2 \
                -mcmodel=large -Wall -Wextra
 ARM64_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -g -ffreestanding \
