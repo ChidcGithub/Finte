@@ -141,9 +141,10 @@ never treated as user pointers.
   the space for release after switching to the scheduler root; page tables are
   freed even if `proc_destroy()` is not called. `proc_destroy()` frees the
   process object and any dead fork children.
-- A process owns its fd table (initrd/file capabilities), anonymous `mmap`
-  mappings and the fixed shared/arena mappings. Fork copies the fd table and
-  address space; exec builds a fresh space and closes non-console fds.
+- A process owns a dynamically grown fd table, anonymous `mmap`
+  mappings and the fixed shared/arena mappings. Descriptors reference
+  refcounted open-file descriptions; fork copies the table and shares those
+  descriptions, while exec keeps all descriptors except `FD_CLOEXEC` ones.
 - An Arena owns its backing pages until the Arena is destroyed.
 - A Channel owns queued messages and their attached capability references.
 - Anonymous `mmap`/`munmap` exist with a 64-page-per-mapping cap. File-backed
@@ -219,7 +220,8 @@ The target contract requires:
   pages and the isolated `procs` demo.
 - `make arm64-uefi-test`: same checks plus PMM counts from the UEFI memory map.
 - `make arm64-disk-test`: virtio-mmio lfc1/ext4/NTFS reads (legacy + modern).
-- `make abi-test`: x86_64 fd table, anonymous and file-backed mmap, COW fork,
+- `make abi-test`: x86_64 dynamic fd table with dup/dup2/fcntl and shared
+  open-file descriptions, anonymous and file-backed mmap, COW fork,
   waitpid, exec, signal sets, job control, process groups, SIGALRM timers,
   cap transfer, churn, blocked-flow abort and RX/RW-NX PTE checks.
 - `make arm64-test`: the same shared ABI suite on 4 CPUs plus the EL0/procs

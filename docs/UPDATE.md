@@ -48,6 +48,15 @@ Short notes only. GitHub releases carry the per-commit changes.
   checks remaining-time reporting, cancel, one-shot delivery, a repeating
   200 ms timer, `getitimer` and the default SIGALRM exit status; the shared ABI
   line reports `alarm=OK`.
+- Replaced the fixed 16-entry fd array with a dynamic descriptor table (up to
+  256 slots) backed by refcounted open-file descriptions. `dup`, `dup2` and
+  `fcntl(F_DUPFD)` share descriptions and offsets; `fcntl` also exposes
+  `FD_CLOEXEC` and the descriptor flags. Fork clones descriptors onto the same
+  descriptions, exec preserves every descriptor except `FD_CLOEXEC`, and close
+  drops one reference before the file handle is released. The new `fdtab.elf`
+  covers growth past 16 slots, shared offsets, exact and minimum dup targets,
+  fork and fork+exec inheritance and close isolation; the shared ABI line
+  reports `fdtab=OK`.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

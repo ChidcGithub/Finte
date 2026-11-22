@@ -181,7 +181,7 @@ services, not the interrupt controller, timer or boot console.
 ## 9. Test evidence
 
 - `src/core/process.c` plus `src/arch/x86_64/process.c` and
-  `src/arch/arm64/process.c`: ELF loading, fd table, mmap, file-backed mmap, COW fork, waitpid, exec,
+  `src/arch/arm64/process.c`: ELF loading, dynamic fd table, mmap, file-backed mmap, COW fork, waitpid, exec,
   signals, cap transfer, page tables, user copy validation and user faults.
 - `make abi-test`: x86_64 process ABI suite on one CPU.
 - `make arm64-test` / `make arm64-uefi-test`: EL0 `init.elf`, `procs`, the same

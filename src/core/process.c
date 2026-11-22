@@ -781,25 +781,265 @@ static int proc_map_stack_into(faddr_space_t *as, uint64_t *stack_top)
     return rc;
 }
 
-static void fd_close(fproc_t *p, int fd);
+/* Shared open-file descriptions. A descriptor references one of these;
+ * dup/fork share the offset, while close drops one reference. The pool is
+ * independent of the per-process descriptor table. */
+struct ffile_desc {
+    uint32_t refs;
+    uint8_t used;
+    uint8_t kind;
+    uint16_t reserved;
+    uint32_t flags;
+    uint32_t rights;
+    uint64_t offset;
+    uint64_t size;
+    fhandle_t handle;
+    const uint8_t *data;
+    char path[FDISK_PATH_MAX];
+};
 
-static void proc_fds_init(fproc_t *p)
+static ffile_desc_t g_ofds[FPROC_MAX_OFDS];
+
+static ffile_desc_t *ofd_alloc(uint8_t kind)
 {
-    finte_memset(p->fds, 0, sizeof(p->fds));
-    p->fds[0].used = 1;
-    p->fds[0].kind = FPROC_FD_CONSOLE;
-    p->fds[1].used = 1;
-    p->fds[1].kind = FPROC_FD_CONSOLE;
-    p->fds[2].used = 1;
-    p->fds[2].kind = FPROC_FD_CONSOLE;
+    uint64_t flags = proc_lock();
+    ffile_desc_t *o = NULL;
+    for (uint32_t i = 0; i < FPROC_MAX_OFDS; i++) {
+        if (g_ofds[i].used) {
+            continue;
+        }
+        o = &g_ofds[i];
+        finte_memset(o, 0, sizeof(*o));
+        o->used = 1;
+        o->refs = 1;
+        o->kind = kind;
+        o->handle = FINTE_HANDLE_NONE;
+        break;
+    }
+    proc_unlock(flags);
+    return o;
 }
 
-static int fd_alloc(fproc_t *p)
+static void ofd_ref(ffile_desc_t *o)
 {
-    for (int i = 3; i < FPROC_MAX_FDS; i++) {
-        if (!p->fds[i].used) {
-            return i;
+    if (!o) {
+        return;
+    }
+    uint64_t flags = proc_lock();
+    if (o->used && o->refs != 0) {
+        o->refs++;
+    }
+    proc_unlock(flags);
+}
+
+static void ofd_unref(ffile_desc_t *o)
+{
+    if (!o) {
+        return;
+    }
+    fhandle_t close_handle = FINTE_HANDLE_NONE;
+    uint64_t flags = proc_lock();
+    if (!o->used || o->refs == 0) {
+        proc_unlock(flags);
+        return;
+    }
+    o->refs--;
+    if (o->refs == 0) {
+        if (o->kind == FPROC_FD_FILE) {
+            close_handle = o->handle;
         }
+        o->used = 0;
+        o->kind = FPROC_FD_NONE;
+        o->handle = FINTE_HANDLE_NONE;
+        o->data = NULL;
+    }
+    proc_unlock(flags);
+    if (finte_handle_valid(close_handle)) {
+        (void)finte_file_handle_close(close_handle);
+    }
+}
+
+static ffd_t *fd_at(fproc_t *p, int fd)
+{
+    if (!p || fd < 0 || (uint32_t)fd >= p->fd_capacity || !p->fds) {
+        return NULL;
+    }
+    return p->fds[fd].ofd ? &p->fds[fd] : NULL;
+}
+
+/* Grow the descriptor table geometrically. The table itself is page-backed,
+ * so 256 16-byte descriptors fit in one page. */
+static int fd_table_grow(fproc_t *p, uint32_t need)
+{
+    if (!p || need > FPROC_MAX_FDS) {
+        return -1;
+    }
+    if (need <= p->fd_capacity) {
+        return 0;
+    }
+    uint32_t cap = p->fd_capacity ? p->fd_capacity : 16;
+    while (cap < need && cap < FPROC_MAX_FDS) {
+        cap *= 2;
+    }
+    if (cap > FPROC_MAX_FDS) {
+        cap = FPROC_MAX_FDS;
+    }
+    if (cap < need) {
+        return -1;
+    }
+    ffd_t *table = (ffd_t *)hal_pages_alloc((size_t)cap * sizeof(ffd_t));
+    if (!table) {
+        return -1;
+    }
+    if (p->fds) {
+        finte_memcpy(table, p->fds, (size_t)p->fd_capacity * sizeof(ffd_t));
+        hal_pages_free(p->fds, (size_t)p->fd_capacity * sizeof(ffd_t));
+    }
+    p->fds = table;
+    p->fd_capacity = cap;
+    return 0;
+}
+
+static int fd_bind(fproc_t *p, int fd, ffile_desc_t *o, uint8_t fd_flags)
+{
+    if (!p || !o || fd < 0 || (uint32_t)fd >= p->fd_capacity) {
+        return -1;
+    }
+    int cap = -1;
+    if (o->kind == FPROC_FD_FILE && p->flow) {
+        cap = finte_cap_install(p->flow, o->handle, o->rights);
+        if (cap < 0) {
+            return -1;
+        }
+    }
+    p->fds[fd].ofd = o;
+    p->fds[fd].cap = cap;
+    p->fds[fd].fd_flags = fd_flags;
+    return 0;
+}
+
+static void fd_close(fproc_t *p, int fd);
+
+static int proc_fds_init(fproc_t *p)
+{
+    if (!p || fd_table_grow(p, 3) != 0) {
+        return -1;
+    }
+    ffile_desc_t *o = ofd_alloc(FPROC_FD_CONSOLE);
+    if (!o) {
+        return -1;
+    }
+    ofd_ref(o);
+    ofd_ref(o);
+    for (int i = 0; i < 3; i++) {
+        p->fds[i].ofd = o;
+        p->fds[i].cap = -1;
+        p->fds[i].fd_flags = 0;
+    }
+    return 0;
+}
+
+static void proc_fds_release(fproc_t *p)
+{
+    if (!p || !p->fds) {
+        return;
+    }
+    for (uint32_t i = 0; i < p->fd_capacity; i++) {
+        if (p->fds[i].ofd) {
+            fd_close(p, (int)i);
+        }
+    }
+    hal_pages_free(p->fds, (size_t)p->fd_capacity * sizeof(ffd_t));
+    p->fds = NULL;
+    p->fd_capacity = 0;
+}
+
+static int fd_alloc(fproc_t *p, uint32_t minfd)
+{
+    if (!p || minfd >= FPROC_MAX_FDS) {
+        return -1;
+    }
+    if (minfd >= p->fd_capacity) {
+        if (fd_table_grow(p, minfd + 1) != 0) {
+            return -1;
+        }
+    }
+    for (uint32_t i = minfd; i < p->fd_capacity; i++) {
+        if (!p->fds[i].ofd) {
+            return (int)i;
+        }
+    }
+    uint32_t old = p->fd_capacity;
+    if (old >= FPROC_MAX_FDS || fd_table_grow(p, old + 1) != 0) {
+        return -1;
+    }
+    for (uint32_t i = old; i < p->fd_capacity; i++) {
+        if (!p->fds[i].ofd) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int fd_dup(fproc_t *p, int oldfd, int newfd, int exact)
+{
+    ffd_t *src = fd_at(p, oldfd);
+    if (!src) {
+        return -1;
+    }
+    if (exact) {
+        if (newfd < 0 || newfd >= FPROC_MAX_FDS) {
+            return -1;
+        }
+        if (newfd == oldfd) {
+            return oldfd;
+        }
+        if (fd_table_grow(p, (uint32_t)newfd + 1) != 0) {
+            return -1;
+        }
+        if (p->fds[newfd].ofd) {
+            fd_close(p, newfd);
+        }
+    } else {
+        int slot = fd_alloc(p, (uint32_t)newfd);
+        if (slot < 0) {
+            return -1;
+        }
+        newfd = slot;
+    }
+    ofd_ref(src->ofd);
+    if (fd_bind(p, newfd, src->ofd, 0) != 0) {
+        ofd_unref(src->ofd);
+        return -1;
+    }
+    return newfd;
+}
+
+static int sys_fcntl(fproc_t *p, uint64_t fd, uint64_t cmd, uint64_t arg)
+{
+    ffd_t *e = fd_at(p, (int)fd);
+    if (!e) {
+        return -1;
+    }
+    if (cmd == FPROC_F_DUPFD) {
+        if ((int32_t)arg < 0) {
+            return -1;
+        }
+        return fd_dup(p, (int)fd, (int)arg, 0);
+    }
+    if (cmd == FPROC_F_GETFD) {
+        return e->fd_flags;
+    }
+    if (cmd == FPROC_F_SETFD) {
+        e->fd_flags = (uint8_t)(arg & FPROC_FD_CLOEXEC);
+        return 0;
+    }
+    if (cmd == FPROC_F_GETFL) {
+        return (int)e->ofd->flags;
+    }
+    if (cmd == FPROC_F_SETFL) {
+        e->ofd->flags = (uint32_t)arg;
+        return 0;
     }
     return -1;
 }
@@ -809,15 +1049,10 @@ static int fd_open(fproc_t *p, const char *path, uint32_t flags)
     if (!p || !path || !*path) {
         return -1;
     }
-    int fd = fd_alloc(p);
+    int fd = fd_alloc(p, 0);
     if (fd < 0) {
         return -1;
     }
-    ffd_t *e = &p->fds[fd];
-    finte_memset(e, 0, sizeof(*e));
-    e->used = 1;
-    e->flags = flags;
-    finte_strlcpy(e->path, path, sizeof(e->path));
 
     const char *name = path;
     while (*name == '/') {
@@ -825,10 +1060,18 @@ static int fd_open(fproc_t *p, const char *path, uint32_t flags)
     }
     int idx = finte_initrd_find(name);
     if (idx >= 0 && !(flags & FPROC_OPEN_WRITE)) {
-        e->kind = FPROC_FD_INITRD;
-        e->data = (const uint8_t *)finte_initrd_data((uint32_t)idx);
-        e->size = finte_initrd_size((uint32_t)idx);
-        e->offset = 0;
+        ffile_desc_t *o = ofd_alloc(FPROC_FD_INITRD);
+        if (!o) {
+            return -1;
+        }
+        o->flags = flags;
+        o->data = (const uint8_t *)finte_initrd_data((uint32_t)idx);
+        o->size = finte_initrd_size((uint32_t)idx);
+        finte_strlcpy(o->path, path, sizeof(o->path));
+        if (fd_bind(p, fd, o, 0) != 0) {
+            ofd_unref(o);
+            return -1;
+        }
         return fd;
     }
 
@@ -845,59 +1088,72 @@ static int fd_open(fproc_t *p, const char *path, uint32_t flags)
     fhandle_t h = FINTE_HANDLE_NONE;
     int rc = finte_disk_file_open(path, oflags, &h);
     if (rc != 0) {
-        e->used = 0;
         return -1;
     }
     uint32_t rights = (flags & FPROC_OPEN_WRITE) ? FINTE_R_WRITE : FINTE_R_READ;
     if (flags & FPROC_OPEN_WRITE) {
         rights |= FINTE_R_READ;
     }
-    int cap = finte_cap_install(p->flow, h, rights);
-    if (cap < 0) {
+    ffile_desc_t *o = ofd_alloc(FPROC_FD_FILE);
+    if (!o) {
         (void)finte_file_handle_close(h);
-        e->used = 0;
         return -1;
     }
-    e->kind = FPROC_FD_FILE;
-    e->handle = h;
-    e->cap = (uint16_t)cap;
-    e->offset = 0;
+    o->flags = flags;
+    o->rights = rights;
+    o->handle = h;
     int64_t sz = finte_file_handle_size(h);
-    e->size = sz > 0 ? (uint64_t)sz : 0;
+    o->size = sz > 0 ? (uint64_t)sz : 0;
+    finte_strlcpy(o->path, path, sizeof(o->path));
+    if (fd_bind(p, fd, o, 0) != 0) {
+        ofd_unref(o);
+        return -1;
+    }
     return fd;
 }
 
 static void fd_close(fproc_t *p, int fd)
 {
-    if (!p || fd < 0 || fd >= FPROC_MAX_FDS || !p->fds[fd].used) {
+    if (!p || fd < 0 || (uint32_t)fd >= p->fd_capacity || !p->fds) {
         return;
     }
-    if (p->fds[fd].kind == FPROC_FD_FILE) {
-        (void)finte_cap_drop_index(p->flow, p->fds[fd].cap);
-        (void)finte_file_handle_close(p->fds[fd].handle);
+    ffd_t *e = &p->fds[fd];
+    ffile_desc_t *o = e->ofd;
+    if (!o) {
+        return;
     }
-    finte_memset(&p->fds[fd], 0, sizeof(p->fds[fd]));
+    int32_t cap = e->cap;
+    e->ofd = NULL;
+    e->cap = -1;
+    e->fd_flags = 0;
+    if (cap >= 0 && p->flow) {
+        (void)finte_cap_drop_index(p->flow, (uint16_t)cap);
+    }
+    ofd_unref(o);
 }
 
-static int fd_read(fproc_t *p, int fd, void *dst, size_t len)
+static int fd_read_at(fproc_t *p, ffd_t *e, uint64_t offset, void *dst,
+                      size_t len)
 {
-    if (!p || fd < 0 || fd >= FPROC_MAX_FDS || !p->fds[fd].used) {
+    ffile_desc_t *o = e ? e->ofd : NULL;
+    if (!o) {
         return -1;
     }
-    ffd_t *e = &p->fds[fd];
-    if (e->kind == FPROC_FD_INITRD) {
-        if (e->offset >= e->size) {
+    if (o->kind == FPROC_FD_INITRD) {
+        if (offset >= o->size) {
             return 0;
         }
-        size_t n = (size_t)(e->size - e->offset);
+        size_t n = (size_t)(o->size - offset);
         if (n > len) {
             n = len;
         }
-        finte_memcpy(dst, e->data + e->offset, n);
-        e->offset += n;
+        finte_memcpy(dst, o->data + offset, n);
         return (int)n;
     }
-    if (e->kind == FPROC_FD_FILE) {
+    if (o->kind == FPROC_FD_FILE) {
+        if (e->cap < 0) {
+            return -1;
+        }
         uint8_t bounce[256];
         size_t total = 0;
         while (total < len) {
@@ -905,7 +1161,8 @@ static int fd_read(fproc_t *p, int fd, void *dst, size_t len)
             if (chunk > sizeof(bounce)) {
                 chunk = sizeof(bounce);
             }
-            fret_t r = fx_file_read(p->flow, e->cap, e->offset, bounce, chunk);
+            fret_t r = fx_file_read(p->flow, (uint16_t)e->cap, offset + total,
+                                    bounce, chunk);
             if (r.status != FINTE_OK) {
                 return total ? (int)total : -1;
             }
@@ -913,7 +1170,6 @@ static int fd_read(fproc_t *p, int fd, void *dst, size_t len)
                 break;
             }
             finte_memcpy((uint8_t *)dst + total, bounce, (size_t)r.value);
-            e->offset += (uint64_t)r.value;
             total += (size_t)r.value;
             if ((size_t)r.value < chunk) {
                 break;
@@ -924,30 +1180,43 @@ static int fd_read(fproc_t *p, int fd, void *dst, size_t len)
     return -1;
 }
 
-static int fd_pread(fproc_t *p, int fd, uint64_t offset, void *dst, size_t len)
+static int fd_read(fproc_t *p, int fd, void *dst, size_t len)
 {
-    if (!p || fd < 0 || fd >= FPROC_MAX_FDS || !p->fds[fd].used) {
+    ffd_t *e = fd_at(p, fd);
+    if (!e) {
         return -1;
     }
-    ffd_t *e = &p->fds[fd];
-    uint64_t saved = e->offset;
-    e->offset = offset;
-    int n = fd_read(p, fd, dst, len);
-    e->offset = saved;
+    int n = fd_read_at(p, e, e->ofd->offset, dst, len);
+    if (n > 0) {
+        e->ofd->offset += (uint64_t)n;
+    }
     return n;
+}
+
+static int fd_pread(fproc_t *p, int fd, uint64_t offset, void *dst, size_t len)
+{
+    ffd_t *e = fd_at(p, fd);
+    if (!e) {
+        return -1;
+    }
+    return fd_read_at(p, e, offset, dst, len);
 }
 
 static int fd_write(fproc_t *p, int fd, const void *src, size_t len)
 {
-    if (!p || fd < 0 || fd >= FPROC_MAX_FDS || !p->fds[fd].used) {
+    ffd_t *e = fd_at(p, fd);
+    if (!e) {
         return -1;
     }
-    ffd_t *e = &p->fds[fd];
-    if (e->kind == FPROC_FD_CONSOLE) {
+    ffile_desc_t *o = e->ofd;
+    if (o->kind == FPROC_FD_CONSOLE) {
         hal_console_write((const char *)src, len);
         return (int)len;
     }
-    if (e->kind == FPROC_FD_FILE) {
+    if (o->kind == FPROC_FD_FILE) {
+        if (e->cap < 0) {
+            return -1;
+        }
         uint8_t bounce[256];
         size_t total = 0;
         while (total < len) {
@@ -956,15 +1225,16 @@ static int fd_write(fproc_t *p, int fd, const void *src, size_t len)
                 chunk = sizeof(bounce);
             }
             finte_memcpy(bounce, (const uint8_t *)src + total, chunk);
-            fret_t r = fx_file_write(p->flow, e->cap, e->offset, bounce, chunk);
+            fret_t r = fx_file_write(p->flow, (uint16_t)e->cap,
+                                     o->offset + total, bounce, chunk);
             if (r.status != FINTE_OK || r.value != (uint64_t)chunk) {
                 return total ? (int)total : -1;
             }
-            e->offset += chunk;
             total += chunk;
         }
-        if (e->offset > e->size) {
-            e->size = e->offset;
+        o->offset += total;
+        if (o->offset > o->size) {
+            o->size = o->offset;
         }
         return (int)total;
     }
@@ -1098,7 +1368,6 @@ fproc_t *finte_proc_create(const char *name, const char *elf, uint32_t pid,
         hal_pages_free(p, PROC_BYTES);
         return NULL;
     }
-    proc_fds_init(p);
     proc_init_maps(p);
     p->sig_frame = hal_pages_alloc(4096);
     if (!p->sig_frame) {
@@ -1164,6 +1433,10 @@ fproc_t *finte_proc_create(const char *name, const char *elf, uint32_t pid,
         }
         p->arena_cap = slot;
     }
+    if (proc_fds_init(p) != 0) {
+        finte_proc_destroy(p);
+        return NULL;
+    }
     proc_table_add(p);
     return p;
 }
@@ -1214,14 +1487,7 @@ void finte_proc_destroy(fproc_t *p)
         }
         finte_proc_destroy(child);
     }
-    for (int i = 3; i < FPROC_MAX_FDS; i++) {
-        if (p->fds[i].used && p->fds[i].kind == FPROC_FD_FILE) {
-            if (p->flow) {
-                (void)finte_cap_drop_index(p->flow, p->fds[i].cap);
-            }
-            (void)finte_file_handle_close(p->fds[i].handle);
-        }
-    }
+    proc_fds_release(p);
     proc_table_remove(p);
     finte_service_owner_exit(p->pid);
     if (p->flow && p->flow->space == p->space) {
@@ -1461,8 +1727,8 @@ static uint64_t sys_mmap_file(fproc_t *p, uint64_t fd, uint64_t len,
     if (!p || !p->space || fd >= FPROC_MAX_FDS || len == 0) {
         return (uint64_t)-1;
     }
-    ffd_t *e = &p->fds[fd];
-    if (!e->used || e->kind == FPROC_FD_CONSOLE) {
+    ffd_t *e = fd_at(p, (int)fd);
+    if (!e || e->ofd->kind == FPROC_FD_CONSOLE) {
         return (uint64_t)-1;
     }
     if (prot == 0) {
@@ -1938,20 +2204,38 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
         fd_close(p, (int)a0);
         return 0;
     }
+    if (nr == FPROC_SYS_DUP) {
+        return (uint64_t)fd_dup(p, (int)a0, 0, 0);
+    }
+    if (nr == FPROC_SYS_DUP2) {
+        return (uint64_t)fd_dup(p, (int)a0, (int)a1, 1);
+    }
+    if (nr == FPROC_SYS_FCNTL) {
+        return (uint64_t)sys_fcntl(p, a0, a1, a2);
+    }
     if (nr == FPROC_SYS_LSEEK) {
-        if (!p || a0 >= FPROC_MAX_FDS || !p->fds[a0].used) {
+        ffd_t *e = fd_at(p, (int)a0);
+        if (!e) {
             return (uint64_t)-1;
         }
-        if (a2 == 0) {
-            p->fds[a0].offset = a1;
-        } else if (a2 == 1) {
-            p->fds[a0].offset += a1;
+        ffile_desc_t *o = e->ofd;
+        if (o->kind != FPROC_FD_INITRD && o->kind != FPROC_FD_FILE) {
+            return (uint64_t)-1;
+        }
+        int64_t base = 0;
+        if (a2 == 1) {
+            base = (int64_t)o->offset;
         } else if (a2 == 2) {
-            p->fds[a0].offset = p->fds[a0].size + a1;
-        } else {
+            base = (int64_t)o->size;
+        } else if (a2 != 0) {
             return (uint64_t)-1;
         }
-        return p->fds[a0].offset;
+        int64_t pos = base + (int64_t)a1;
+        if (pos < 0) {
+            return (uint64_t)-1;
+        }
+        o->offset = (uint64_t)pos;
+        return (uint64_t)pos;
     }
     if (nr == FPROC_SYS_MMAP) {
         return sys_mmap(p, a0, a1, a2);
@@ -2146,25 +2430,22 @@ static const fprogram_t g_fork_program = {
 
 static int proc_clone_fds(fproc_t *child, const fproc_t *parent)
 {
-    for (int i = 0; i < FPROC_MAX_FDS; i++) {
-        if (!parent->fds[i].used) {
+    if (!child || !parent || !parent->fds) {
+        return 0;
+    }
+    if (fd_table_grow(child, parent->fd_capacity) != 0) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < parent->fd_capacity; i++) {
+        if (!parent->fds[i].ofd) {
             continue;
         }
-        child->fds[i] = parent->fds[i];
-        if (parent->fds[i].kind != FPROC_FD_FILE) {
-            continue;
-        }
-        fcap_t cap;
-        if (finte_cap_check(parent->flow, parent->fds[i].cap, 0, &cap) < 0) {
+        ffile_desc_t *o = parent->fds[i].ofd;
+        ofd_ref(o);
+        if (fd_bind(child, (int)i, o, parent->fds[i].fd_flags) != 0) {
+            ofd_unref(o);
             return -1;
         }
-        int slot = finte_cap_install(child->flow, cap.handle, cap.rights);
-        if (slot < 0) {
-            return -1;
-        }
-        child->fds[i].cap = (uint16_t)slot;
-        child->fds[i].handle = cap.handle;
-        finte_node_ref(cap.handle);
     }
     return 0;
 }
@@ -2375,11 +2656,15 @@ int finte_proc_waitpid(fproc_t *p, int32_t pid, uint64_t status_uva,
     return (int)reaped;
 }
 
-static void proc_close_user_fds(fproc_t *p)
+static void proc_exec_fds(fproc_t *p)
 {
-    for (int i = 3; i < FPROC_MAX_FDS; i++) {
-        if (p->fds[i].used) {
-            fd_close(p, i);
+    if (!p || !p->fds) {
+        return;
+    }
+    for (uint32_t i = 0; i < p->fd_capacity; i++) {
+        if (p->fds[i].ofd &&
+            (p->fds[i].fd_flags & FPROC_FD_CLOEXEC)) {
+            fd_close(p, (int)i);
         }
     }
 }
@@ -2425,7 +2710,7 @@ uint64_t finte_proc_exec(fproc_t *p, uint64_t path_uva, uint64_t path_len,
         p->flow->thread->ctx->addr_space = finte_as_root(new);
     }
     proc_init_maps(p);
-    proc_close_user_fds(p);
+    proc_exec_fds(p);
     finte_memset(p->sigs, 0, sizeof(p->sigs));
     finte_as_switch(new);
     finte_as_unref(old);
@@ -2833,6 +3118,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage pgroup done\n", 25);
     int alarm_rc = finte_usermode_run("alarm.elf");
     hal_console_write("[abi] stage alarm done\n", 24);
+    int fdtab_rc = finte_usermode_run("fdtab.elf");
+    hal_console_write("[abi] stage fdtab done\n", 24);
     int cap_rc = proc_cap_test();
     hal_console_write("[abi] stage cap done\n", 22);
     int svc_rc = proc_service_test();
@@ -2864,22 +3151,22 @@ int finte_proc_abi_test(void)
         finte_node_unref(chan);
     }
 
-    char buf[192];
+    char buf[256];
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
                          "filemap=%s exec=%s signal=%s sigset=%s job=%s "
-                         "pgroup=%s alarm=%s cap=%s service=%s bad=%s "
-                         "dyn=%s churn=%s blocked=%s\n",
+                         "pgroup=%s alarm=%s fdtab=%s cap=%s service=%s "
+                         "bad=%s dyn=%s churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
                          ok_str(cow_rc == 0), ok_str(filemap_rc == 0),
                          ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(sigset_rc == 0),
                          ok_str(job_rc == 0), ok_str(pgroup_rc == 0),
-                         ok_str(alarm_rc == 0), ok_str(cap_rc == 0),
-                         ok_str(svc_rc == 0), ok_str(bad_rc == 0),
-                         ok_str(dyn_rc == 0), ok_str(churn_rc == 0),
-                         ok_str(blocked_ok));
+                         ok_str(alarm_rc == 0), ok_str(fdtab_rc == 0),
+                         ok_str(cap_rc == 0), ok_str(svc_rc == 0),
+                         ok_str(bad_rc == 0), ok_str(dyn_rc == 0),
+                         ok_str(churn_rc == 0), ok_str(blocked_ok));
     if (n > 0) {
         hal_console_write(buf, (size_t)n);
     }
@@ -2887,8 +3174,8 @@ int finte_proc_abi_test(void)
     return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
             cow_rc == 0 && filemap_rc == 0 && exec_rc == 0 &&
             sig_rc == 0 && sigset_rc == 0 && job_rc == 0 &&
-            pgroup_rc == 0 && alarm_rc == 0 && cap_rc == 0 &&
-            svc_rc == 0 &&
+            pgroup_rc == 0 && alarm_rc == 0 && fdtab_rc == 0 &&
+            cap_rc == 0 && svc_rc == 0 &&
             bad_rc == 0 && dyn_rc == 0 && churn_rc == 0 &&
             blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

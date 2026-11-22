@@ -137,7 +137,7 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
 | SMP startup | Implemented (PSCI CPU_ON, 4 CPUs) |
 | User mode | Implemented (EL0, `svc #0`, shared process ABI) |
 | User address space | Implemented (4–5 GiB, per-process TTBR0 + ASID) |
-| Process ABI | Partial (fd table, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, SIGALRM timers via alarm/setitimer/getitimer, cap transfer, service registry, ET_DYN load) |
+| Process ABI | Partial (dynamic fd table with dup/dup2/fcntl and shared open-file descriptions, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, SIGALRM timers via alarm/setitimer/getitimer, cap transfer, service registry, ET_DYN load) |
 | Block devices | Implemented (virtio-mmio legacy + modern) |
 | ACPI / Device Tree parsing | Missing (pointers passed only) |
 | GICv3 | Missing |
@@ -163,7 +163,9 @@ Do not claim cross-architecture parity until the corresponding tests exist.
   supported, while ITIMER_VIRTUAL/PROF are absent.
 - `waitpid` reports exited, stopped and continued children via WUNTRACED and
   WCONTINUED, and accepts `-pgid`/0 selectors. `setpgid`/`getpgrp` and group
-  signals via `kill(-pgid)` are supported; there is no general Linux fd table.
+  signals via `kill(-pgid)` are supported. The fd table grows dynamically,
+  dups and fork children share open-file descriptions, and exec preserves
+  non-CLOEXEC descriptors.
 - Address-space teardown is Flow-owned; `proc_destroy()` only frees the process
   object. A fork child that is still live when its parent is destroyed is
   aborted and left for flow death rather than synchronously reaped.
@@ -182,7 +184,8 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 - `make arm64-test`: QEMU `virt`, 4 CPUs, MMU identity translations, GICv2
   timer ticks, SMP flow distribution, `init.elf` at EL0, the full
   `procs` IPC/shared-memory/arena/time/preemption/fault demo, and the shared
-  process ABI suite (fd table, mmap, file-backed mmap, COW fork, waitpid, exec,
+  process ABI suite (dynamic fd table with dup/dup2/fcntl and shared
+  open-file descriptions, mmap, file-backed mmap, COW fork, waitpid, exec,
   signal masks/sigset, job control, process groups, SIGALRM timers, cap
   transfer, service registry, ET_DYN load, churn, blocked-flow abort) plus 147
   core checks, PASS.

@@ -45,7 +45,7 @@ ARM64_USER_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -ffreestanding \
                      -fno-unwind-tables -fno-asynchronous-unwind-tables \
                      -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
                      -Wall -Wextra
-USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn wait cow filemap sigset job pgroup alarm exit block
+USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn wait cow filemap sigset job pgroup alarm fdtab fdchild exit block
 USER_ELF := $(addprefix $(BUILD)/,$(addsuffix .elf,$(USER_PROGS)))
 ARM64_USER_ELF := $(addprefix $(BUILD)/arm64/,$(addsuffix .elf,$(USER_PROGS)))
 
@@ -144,7 +144,7 @@ arm64-test: arm64
 	    grep -q "arm64 user: init.elf PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 procs: PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 abi: PASS" $(BUILD)/arm64.log && \
-	    grep -Fq "abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
+	    grep -Fq "abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK fdtab=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
 	    grep -Fq "procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK" $(BUILD)/arm64.log; then \
 	  echo "arm64 boot test: OK"; \
 	else \

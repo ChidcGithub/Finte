@@ -21,7 +21,8 @@
 #define FPROC_ARENA_MAX_PAGES  4
 
 #define FPROC_MAX_PAGES        512
-#define FPROC_MAX_FDS          16
+#define FPROC_MAX_FDS          256
+#define FPROC_MAX_OFDS         256
 #define FPROC_MAX_MAPS         16
 #define FPROC_MAX_MAP_PAGES    64
 #define FPROC_MAX_PROCS        16
@@ -62,6 +63,8 @@
 #define FPROC_SYS_SERVICE_UNREG 17
 #define FPROC_SYS_DYNSVC       18
 #define FPROC_SYS_MMAP_FILE    19
+#define FPROC_SYS_DUP          32
+#define FPROC_SYS_DUP2         33
 #define FPROC_SYS_GETITIMER    36
 #define FPROC_SYS_ALARM        37
 #define FPROC_SYS_SETITIMER    38
@@ -71,6 +74,13 @@
 #define FPROC_WUNTRACED        2
 #define FPROC_WCONTINUED       4
 #define FPROC_SYS_EXIT         60
+#define FPROC_SYS_FCNTL        72
+#define FPROC_F_DUPFD          0
+#define FPROC_F_GETFD          1
+#define FPROC_F_SETFD          2
+#define FPROC_F_GETFL          3
+#define FPROC_F_SETFL          4
+#define FPROC_FD_CLOEXEC       0x1
 #define FPROC_SYS_TIME         200
 #define FPROC_SYS_SLEEP        201
 #define FPROC_SYS_YIELD        202
@@ -102,16 +112,14 @@ typedef struct faddr_space faddr_space_t;
 typedef struct fproc fproc_t;
 typedef struct fproc_arch_ops fproc_arch_ops_t;
 
+typedef struct ffile_desc ffile_desc_t;
+
+/* A descriptor is a reference to a shared open-file description. Dups and
+ * fork children share the description and therefore the offset. */
 typedef struct ffd {
-    uint8_t used;
-    uint8_t kind;
-    uint16_t cap;
-    uint32_t flags;
-    uint64_t offset;
-    uint64_t size;
-    fhandle_t handle;
-    const uint8_t *data;
-    char path[FDISK_PATH_MAX];
+    ffile_desc_t *ofd;
+    int32_t cap; /* per-process capability for file-backed descriptions */
+    uint8_t fd_flags;
 } ffd_t;
 
 typedef struct fmap {
@@ -165,7 +173,8 @@ struct fproc {
     uint64_t timer_expire_ns;   /* absolute; 0 = disarmed */
     uint64_t timer_interval_ns; /* 0 = one-shot */
     char name[FINTE_NAME_MAX];
-    ffd_t fds[FPROC_MAX_FDS];
+    ffd_t *fds;
+    uint32_t fd_capacity;
     fmap_t maps[FPROC_MAX_MAPS];
     uint64_t mmap_next;
     fsig_t sigs[FPROC_MAX_SIGNALS];
