@@ -15,7 +15,7 @@ check_log() {
     ok=1
     for pat in \
         'arm64 self-check: PASS' \
-        'arm64 disk: 1 block device(s)' \
+        'arm64 disk: 2 block device(s)' \
         'arm64 disk: hd0 131072 sectors sector=512 scheme=1 parts=3' \
         'arm64 disk: hd0p1 lfc1 label=FINTE_LFC1' \
         'arm64 disk: hd0p1 hello="hello from lfc1"' \
