@@ -830,6 +830,46 @@ static void test_pmm_churn(void)
     CHECK(pmm_active() == 0);
 }
 
+static void test_process_space(void)
+{
+    CHECK(finte_as_live_spaces() == 0);
+    faddr_space_t *as = finte_as_create();
+    CHECK(as != NULL);
+    void *rx = finte_as_alloc_page(as);
+    void *rw = finte_as_alloc_page(as);
+    CHECK(rx != NULL);
+    CHECK(rw != NULL);
+    CHECK(finte_as_map(as, FPROC_USER_BASE, (uint64_t)(uintptr_t)rx,
+                       FPROC_PROT_READ | FPROC_PROT_EXEC) == 0);
+    CHECK(finte_as_map(as, FPROC_USER_BASE + 4096u,
+                       (uint64_t)(uintptr_t)rw,
+                       FPROC_PROT_READ | FPROC_PROT_WRITE) == 0);
+    uint32_t rxp = finte_as_prot(as, FPROC_USER_BASE);
+    uint32_t rwp = finte_as_prot(as, FPROC_USER_BASE + 4096u);
+    CHECK((rxp & FPROC_PROT_EXEC) != 0);
+    CHECK((rxp & FPROC_PROT_WRITE) == 0);
+    CHECK(finte_as_translate(as, FPROC_USER_BASE, 1) == 0);
+    CHECK(finte_as_translate(as, FPROC_USER_BASE, 0) != 0);
+    CHECK((rwp & FPROC_PROT_WRITE) != 0);
+    CHECK((rwp & FPROC_PROT_EXEC) == 0);
+    CHECK(finte_as_translate(as, FPROC_USER_BASE + 4096u, 1) != 0);
+
+    faddr_space_t *clone = finte_as_clone(as);
+    CHECK(clone != NULL);
+    CHECK(finte_as_prot(clone, FPROC_USER_BASE) == rxp);
+    CHECK(finte_as_translate(clone, FPROC_USER_BASE + 4096u, 1) != 0);
+    CHECK(finte_as_live_spaces() == 2);
+    finte_as_unref(clone);
+    CHECK(finte_as_live_spaces() == 1);
+
+    uint64_t unmap_pa = 0;
+    CHECK(finte_as_unmap(as, FPROC_USER_BASE, &unmap_pa) == 0);
+    CHECK(unmap_pa == (uint64_t)(uintptr_t)rx);
+    CHECK(finte_as_translate(as, FPROC_USER_BASE, 0) == 0);
+    finte_as_unref(as);
+    CHECK(finte_as_live_spaces() == 0);
+}
+
 static void test_boot_protocol(void)
 {
     fboot_info_t bi;
@@ -912,6 +952,7 @@ static const struct testcase g_tests[] = {
     { "boot protocol", test_boot_protocol },
     { "physical memory manager", test_pmm },
     { "PMM churn and fragmentation", test_pmm_churn },
+    { "process address spaces", test_process_space },
     { "formatter", test_format },
 };
 

@@ -567,11 +567,11 @@ void hal_fw_end(void)
 {
 }
 
-extern void arm64_mmu_set_root(uint64_t root);
+extern void arm64_mmu_set_ttbr0(uint64_t token);
 
-static void arm64_set_addr_space(uint64_t root)
+static void arm64_set_addr_space(uint64_t token)
 {
-    arm64_mmu_set_root(root);
+    arm64_mmu_set_ttbr0(token);
 }
 
 fhal_ctx_t *hal_ctx_self(void)

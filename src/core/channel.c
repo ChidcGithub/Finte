@@ -60,6 +60,9 @@ fret_t finte_chan_send(fflow_t *f, uint16_t cap, fmsg_t *msg, uint32_t flags)
     }
 
     for (;;) {
+        if (f->abort) {
+            return finte_ret(FINTE_ERR_STATE, 0);
+        }
         if (ch->closed) {
             return finte_ret(FINTE_ERR_STATE, 0);
         }
@@ -111,6 +114,9 @@ fret_t finte_chan_recv(fflow_t *f, uint16_t cap, fmsg_t *out, uint32_t flags)
     fchan_t *ch = &finte_core.channels[n->index];
 
     for (;;) {
+        if (f->abort) {
+            return finte_ret(FINTE_ERR_STATE, 0);
+        }
         if (ch->count > 0) {
             break;
         }

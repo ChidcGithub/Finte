@@ -175,7 +175,7 @@ entry. It is available for future allocator integration.
 
 - `src/tests/test_main.c`: `boot protocol` validates a good structure, rejects
   bad magic/version/map entries and checks usable-range lookup.
-- `make test`: 23 host tests pass.
+- `make test`: 24 host tests pass.
 - `make qemu-test`: x86 BIOS, E820 map, ramdisk module, 147 checks.
 - `make qemu-uefi-test`: x86 UEFI, memory map, modules, `fw=0`, 147 checks.
 - `make qemu-uefi-disk-test`: AHCI after `ExitBootServices`.

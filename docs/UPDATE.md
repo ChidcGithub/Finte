@@ -2,6 +2,20 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-22 — shared process layer
+- Moved ELF loading, user copy, syscall dispatch, fault policy, fd tables,
+  mmap, fork, exec, signals and the user demos into `src/core/process.c`.
+- x86_64 and arm64 now keep only page-table, root-switch, trap-frame and
+  user-entry backends.
+- Address spaces are refcounted and Flow-owned; flow death releases page tables
+  even when `proc_destroy()` is omitted.
+- Added arm64 ASID allocation/invalidation and RX/RW-NX user mappings on both
+  architectures.
+- Added the x86_64 `abi-test` and extended the arm64 boot tests with the shared
+  process ABI suite.
+- Host suite is now 24 tests, including address-space refcount/lifetime and
+  RX/RW-NX checks.
+
 ## 2026-11-22 — 0.0.2
 - Version bumped to 0.0.2.
 - Shared PMM now backs flow stacks and process page tables, with a host

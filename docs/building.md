@@ -51,7 +51,7 @@ make initrd         # build/initrd.bin
 make image          # build/finte.img (BIOS + UEFI USB image)
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
-make test           # 23 extended self-tests (host)
+make test           # 24 extended self-tests (host)
 make selfcheck      # startup POST/self-check suite (host)
 make demo           # host-side native pipeline
 make compat         # host-side Linux persona
@@ -60,7 +60,8 @@ make qemu           # BIOS boot, serial console (SMP=4 by default)
 make qemu-uefi      # OVMF UEFI boot, serial console
 make qemu-test      # BIOS CLI boot test
 make qemu-uefi-test # UEFI CLI boot test
-make arm64-test     # arm64 4-CPU MMU/GIC/timer/SMP + EL0 user/procs
+make abi-test       # x86_64 1-CPU fd/mmap/fork/exec/signal/cap/churn suite
+make arm64-test     # arm64 4-CPU MMU/GIC/timer/SMP + EL0 user/procs/ABI
 make arm64-uefi-test # same arm64 checks under AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
 make arm64-uefi-disk-test # arm64 UEFI virtio disk boot
@@ -305,7 +306,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 
 ## Test matrix
 
-- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 23 host tests, BIOS CLI boot
+- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 24 host tests, BIOS CLI boot
   test, boot protocol v1 with E820 and ramdisk module, kernel POST, USB
   mass-storage boot, VGA screenshot, PS/2 keyboard, timer preemption
   (`preempt=OK`), ring-3 `user`/`procs`, 4-CPU SMP boot.
@@ -325,9 +326,13 @@ A Windows process is holding the directory. Close QEMU/editors or remove
   `user`/`procs`, 4-CPU SMP, screenshot.
 - UEFI disk manager: AHCI, MBR, mount/read/fsinfo/umount for lfc1, ext4 and
   NTFS from `hd1`; writable lfc1.
+- x86_64 process ABI: 1 CPU, fd table, anonymous mmap, fork with fd
+  inheritance, exec, SIGUSR1 delivery, user-to-user cap transfer, churn with
+  PMM stability, blocked-flow abort and RX/RW-NX PTE checks.
 - arm64 direct QEMU `virt`: MMU identity translations, GICv2 timer ticks,
   4-CPU PSCI startup, per-CPU flow hits, EL0 `init.elf`, the four-process
-  `procs` IPC/preemption/fault demo and 147 core checks.
+  `procs` IPC/preemption/fault demo, the same process ABI suite on 4 CPUs and
+  147 core checks.
 - arm64 AAVMF: boot protocol v1, memory map/ACPI, PMM, the same MMU/GIC/SMP/EL0
   checks, stable PMM teardown, ISO and IMG boot.
 - arm64 virtio disk: legacy v1 and modern v2 virtio-mmio transports, lfc1/ext4/
@@ -335,7 +340,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 - Windows 11 QEMU GTK GUI: UEFI boot, 1280x800 window, PS/2/serial shell.
 - Windows 11 QEMU + WHPX: 4-CPU boot, UEFI disk write/read, real keyboard
   input, `preempt` ~135 ms (vs ~397 ms TCG).
-- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 23 tests,
+- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 24 tests,
   self-check, demo, compat, benchmark.
 
 Physical laptop validation is still pending; the image is built for both BIOS

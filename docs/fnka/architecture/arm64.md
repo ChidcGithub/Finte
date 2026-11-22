@@ -3,8 +3,10 @@
 > **Status:** Partial — builds, boots under QEMU `virt` and AAVMF, produces boot
 > protocol v1, and has MMU/page tables, exception dispatch, GICv2, generic
 > timer IRQs, PSCI CPU_ON, per-CPU state, 4-CPU scheduling, EL0 user processes
-> with `svc #0`, and a legacy/modern virtio-mmio block driver. It still lacks a
-> general userland ABI, ACPI/DTB parsing and GICv3.
+> with `svc #0`, and a legacy/modern virtio-mmio block driver. The user layer is
+> the shared `src/core/process.c` core with fd/mmio/fork/exec/signal support and
+> per-process ASIDs. It still lacks full POSIX process semantics, ACPI/DTB
+> parsing and GICv3.
 >
 > **Scope:** AArch64-specific boot, CPU, memory and interrupt mechanisms.
 > Shared semantics are in the concept and kernel documents.
@@ -110,9 +112,15 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
   tables on demand for 4 KiB user pages. `TTBR0_EL1` switches per process; the
   kernel stays mapped through the shared low identity map.
 - The kernel allocates/tracks process page tables and user pages from the PMM
-  (or static heap) and returns them via `proc_destroy()`.
-- No ASID allocator or TLB-shootdown protocol yet; switches use
-  `tlbi vmalle1is`. User pages are RWX (no NX/read-only policy yet).
+  (or static heap). The address space is refcounted and Flow-owned; flow death
+  queues it for release after switching to the scheduler root, so page tables
+  are freed even if `proc_destroy()` is not called.
+- An 8-bit ASID allocator reserves 0 for the kernel and tags `TTBR0_EL1` with
+  the process ASID. Activation invalidates the incoming ASID; teardown flushes
+  the ASID before freeing page tables. ASID rollover broadcasts
+  `tlbi vmalle1is`.
+- User pages use AP[1]=EL0, PXN, and per-mapping UXN; code is RX, data/stack/
+  shared/arena/mmap pages are RW-NX. Read-only code rejects write translation.
 
 ## 4. Current capabilities
 
@@ -127,16 +135,17 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
 | Timer interrupt | Implemented (100 Hz, PPI 30) |
 | IPI | Implemented (SGI 0) |
 | SMP startup | Implemented (PSCI CPU_ON, 4 CPUs) |
-| User mode | Implemented (EL0, `svc #0`, demo ABI) |
-| User address space | Implemented (4–5 GiB, per-process TTBR0) |
+| User mode | Implemented (EL0, `svc #0`, shared process ABI) |
+| User address space | Implemented (4–5 GiB, per-process TTBR0 + ASID) |
+| Process ABI | Partial (fd table, mmap, fork, exec, SIGUSR1, cap transfer) |
 | Block devices | Implemented (virtio-mmio legacy + modern) |
 | ACPI / Device Tree parsing | Missing (pointers passed only) |
 | GICv3 | Missing |
 
 ## 5. Next priorities
 
-1. Extend the native user ABI (`fork`/`exec`, general `mmap`, file descriptors,
-   signals) and give address spaces a Flow-owned lifetime.
+1. Extend the user ABI with copy-on-write fork, `waitpid`, a fuller signal set
+   and general file descriptors for the Linux persona.
 2. ACPI/DTB parsing for platform discovery.
 3. GICv3 support if a target requires it.
 4. Virtio IRQ/feature work and a reusable DMA/block framework.
@@ -147,13 +156,15 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 
 ## 6. Known gaps
 
-- EL0 supports the demo syscall subset only: no `fork`, `exec`, general `mmap`,
-  signal delivery or per-process file descriptor table.
-- User pages are RWX; there is no NX/read-only user mapping or ASID allocator.
-  Address-space switches flush with `tlbi vmalle1is` and there is no TLB
-  shootdown protocol.
-- Address-space teardown is caller-driven through `proc_destroy()` after
-  `finte_run()`; `finte_flow_exit()` does not release page tables itself.
+- Fork eagerly copies pages; there is no COW. Anonymous mappings are capped at
+  64 pages per mapping. Signals cover SIGUSR1 delivery and SIGKILL only.
+- There is no `waitpid`, job control, per-process signal mask or general Linux
+  fd table.
+- Address-space teardown is Flow-owned; `proc_destroy()` only frees the process
+  object. A fork child that is still live when its parent is destroyed is
+  aborted and left for flow death rather than synchronously reaped.
+- The x86 process ABI suite is pinned to the BSP; arm64 runs the same suite on
+  4 CPUs. Simultaneous fork/sleep/migration is not stress-tested.
 - Virtio-mmio is polled, single-queue and QEMU-focused; there is no generic
   block IRQ/DMA framework.
 - QEMU `virt` assumptions are hard-coded in the HAL.
@@ -165,11 +176,13 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 ## 7. Test evidence
 
 - `make arm64-test`: QEMU `virt`, 4 CPUs, MMU identity translations, GICv2
-  timer ticks, SMP flow distribution, `init.elf` at EL0 and the full
-  `procs` IPC/shared-memory/arena/time/preemption/fault demo, plus 147 core
-  checks, PASS.
+  timer ticks, SMP flow distribution, `init.elf` at EL0, the full
+  `procs` IPC/shared-memory/arena/time/preemption/fault demo, and the shared
+  process ABI suite (fd table, mmap, fork, exec, signal, cap transfer, churn,
+  blocked-flow abort) plus 147 core checks, PASS.
 - `make arm64-uefi-test`: AAVMF ISO, boot protocol v1, PMM, MMU, GICv2, timer
-  ticks, 4 CPUs, `hits=2/2/2/2`, initial user process and `procs` demo, PASS.
+  ticks, 4 CPUs, `hits=2/2/2/2`, `init.elf`, `procs` and the full ABI suite,
+  PASS.
 - `make arm64-disk-test`: direct boot with a virtio-mmio `disk-test.img` in
   both legacy and modern transports; mounts `hd0p1` lfc1, `hd0p2` ext4 and
   `hd0p3` NTFS and reads their files, PASS.

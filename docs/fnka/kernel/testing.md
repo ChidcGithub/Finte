@@ -27,7 +27,7 @@ a named platform.
 | Level | Purpose | Current examples |
 | --- | --- | --- |
 | Compile-time | Types, warnings, architecture builds | `make all`, `make images`, `build-win.bat` |
-| Unit tests | Objects, caps, queues, allocators, boot protocol, PMM | `make test` (23 host tests) |
+| Unit tests | Objects, caps, queues, allocators, boot protocol, PMM, address spaces | `make test` (24 host tests) |
 | Kernel self-tests | Controlled kernel environment | 147 checks, 6 sections |
 | QEMU boot tests | Startup, shell, exceptions, timers | `make qemu-test`, `make qemu-uefi-test` |
 | Integration tests | Userland, IPC, storage, drivers | `make qemu-disk-test`, `procs`, `services` |
@@ -37,13 +37,14 @@ a named platform.
 ## 3. Current commands
 
 ```bash
-make test                 # 23 host tests
+make test                 # 24 host tests
 make selfcheck            # 147 core checks on the host
 make qemu-test            # BIOS boot and CLI checks
 make qemu-uefi-test       # UEFI/OVMF boot and CLI checks
 make qemu-disk-test       # BIOS + ATA PIO + lfc1/ext4/NTFS
 make qemu-uefi-disk-test  # UEFI + AHCI + filesystems
-make arm64-test           # arm64 4 CPUs: MMU/timer/SMP + EL0 user/procs + core checks
+make abi-test             # x86_64 1-CPU fd/mmap/fork/exec/signal/cap/churn
+make arm64-test           # arm64 4 CPUs: MMU/timer/SMP + EL0 user/procs/ABI + core checks
 make arm64-uefi-test      # same arm64 platform checks under AAVMF
 make arm64-disk-test      # arm64 virtio-mmio legacy + modern lfc1/ext4/NTFS
 make arm64-uefi-disk-test # arm64 UEFI virtio disk boot under AAVMF
@@ -69,7 +70,7 @@ matrix.
 | Boot protocol v1 | Passing | Passing | E820/UEFI map, ACPI/DTB, modules, validator |
 | Core self-tests | Passing (147) | Passing (147) | Same core suite |
 | Physical allocator | Passing | Passing | Shared PMM from boot map; static-heap fallback |
-| Virtual memory | Partial | Partial | x86 user VM; arm64 identity kernel + per-process user roots |
+| Virtual memory | Partial | Partial | Shared process core; per-process roots, NX/RO, anonymous mmap on both |
 | Exception handling | Passing | Passing | arm64 user faults, IRQ and SVC return; EL1 sync panics |
 | Interrupt dispatch | Passing | Passing | x86 IDT/APIC; arm64 GICv2 |
 | Timer operation | Passing | Passing | x86 PIT/LAPIC; arm64 PPI 30 at 100 Hz |
@@ -80,15 +81,17 @@ matrix.
 | Capability validation | Passing | Passing | Core checks |
 | Channel behavior | Passing | Passing | Core checks |
 | Arena mapping | Passing | Passing | Page-scoped arena caps on both user demos |
-| User-mode transition | Passing | Passing | x86 ring 3 `int 0x80`; arm64 EL0 `svc #0` (demo ABI) |
+| User-mode transition | Passing | Passing | x86 ring 3 `int 0x80`; arm64 EL0 `svc #0` |
+| Process ABI | Passing (1 CPU) | Passing (4 CPUs) | fd table, mmap, fork, exec, SIGUSR1, cap transfer, churn, blocked abort |
 | Block storage | Passing | Passing | x86 ATA/AHCI; arm64 virtio-mmio legacy + modern |
 | ISO/IMG boot | Passing | Passing | Local checks and CI arm64 targets |
 
 ## 5. Current coverage gaps
 
 - No arm64 GICv3, ACPI/DTB or physical-hardware test.
-- No arm64 `fork`/`exec`/general `mmap`, ASID/TLB-shootdown or user-page
-  permission test; the EL0 demo covers the native syscall subset.
+- No COW fork, `waitpid`, full POSIX signal set or file-backed mmap test.
+- x86_64 process ABI runs on one CPU; arm64 covers 4 CPUs. Simultaneous
+  fork/sleep/migration is not stress-tested.
 - No virtio IRQ or queue-stress test; the arm64 block driver is polled.
 - No work-stealing stress test; stealing is disabled.
 - No multi-Thread or Parallel Flow test.

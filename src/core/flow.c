@@ -1,4 +1,5 @@
 #include "finte/object.h"
+#include "finte/process.h"
 #include "internal.h"
 
 #define FINTE_FLOW_STACK (32u * 1024u)
@@ -35,6 +36,10 @@ void finte_thread_release(fthread_t *t)
 {
     if (!t || !t->in_use) {
         return;
+    }
+    if (t->release_space) {
+        finte_as_unref(t->release_space);
+        t->release_space = NULL;
     }
     if (t->ctx) {
         hal_ctx_destroy(t->ctx);
@@ -272,6 +277,19 @@ void finte_flow_exit(fflow_t *f, int code)
     f->state = FINTE_FLOW_DEAD;
     t->state = FINTE_THREAD_DEAD;
     f->exit_code = (uint32_t)code;
+    /* The scheduler releases the address space after switching to the
+     * scheduler context, so the page tables are never freed while active. */
+    if (f->space) {
+        t->release_space = f->space;
+        f->space = NULL;
+    }
+    if (f->user) {
+        fproc_t *p = (fproc_t *)f->user;
+        p->space = NULL;
+        p->flow = NULL;
+        p->exit_code = (uint32_t)code;
+        f->user = NULL;
+    }
 
     /* Wake flows that are waiting for this one to finish. */
     fthread_t *w = f->waiters;

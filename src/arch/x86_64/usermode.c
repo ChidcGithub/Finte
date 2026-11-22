@@ -96,7 +96,16 @@ void usermode_prepare(void)
     usermode_prepare_cpu(hal_cpu_self()->id);
 }
 
-uint64_t usermode_syscall(uint64_t *regs)
+void usermode_syscall(uint64_t *regs)
 {
-    return finte_process_syscall(regs);
+    fflow_t *f = finte_flow_current();
+    fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+    uint64_t nr = regs[14];
+    uint64_t a0 = regs[9];
+    uint64_t a1 = regs[10];
+    uint64_t a2 = regs[11];
+    regs[14] = finte_proc_syscall(p, nr, a0, a1, a2, regs);
+    if (p) {
+        finte_process_signal_check(p, regs);
+    }
 }

@@ -1,4 +1,5 @@
 #include "finte/object.h"
+#include "finte/process.h"
 #include "finte/verb.h"
 #include "internal.h"
 
@@ -119,6 +120,10 @@ static void release_flow(fnode_t *n)
     fflow_t *f = &finte_core.flows[n->index];
     if (f->in_use && (f->state == FINTE_FLOW_DEAD ||
                       f->state == FINTE_FLOW_FREE)) {
+        if (f->space) {
+            finte_as_unref(f->space);
+            f->space = NULL;
+        }
         if (f->thread) {
             finte_thread_release(f->thread);
             f->thread = NULL;

@@ -7,7 +7,7 @@ param(
                  "qemu-uefi", "qemu-uefi-test", "qemu-test", "qemu-disk-test",
                  "qemu-uefi-disk-test", "arm64", "arm64-test",
                  "arm64-uefi-test", "arm64-disk-test", "arm64-uefi-disk-test",
-                 "qemu-arm64",
+                 "abi-test", "qemu-arm64",
                  "clean")]
     [string]$Target = "all",
     [string]$Distro = "Ubuntu-26.04"

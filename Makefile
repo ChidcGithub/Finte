@@ -43,6 +43,9 @@ ARM64_USER_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -ffreestanding \
                      -fno-unwind-tables -fno-asynchronous-unwind-tables \
                      -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
                      -Wall -Wextra
+USER_PROGS := init ipc abi fork exec signal kill cap bad exit block
+USER_ELF := $(addprefix $(BUILD)/,$(addsuffix .elf,$(USER_PROGS)))
+ARM64_USER_ELF := $(addprefix $(BUILD)/arm64/,$(addsuffix .elf,$(USER_PROGS)))
 
 HEADERS := $(wildcard src/include/finte/*.h)
 CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c src/core/channel.c \
@@ -50,15 +53,17 @@ CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c sr
             src/core/demo.c src/core/guest_linux.c src/core/selftest.c src/core/initrd.c \
             src/core/disk.c src/core/lfc1.c src/core/ext4.c src/core/ntfs.c src/core/file.c \
             src/core/lock.c src/core/cas.c src/core/ansi.c src/core/watchdog.c \
-            src/core/bootinfo.c src/core/pmm.c
-HOST_SRC := $(CORE_SRC) src/host/hal_host.c src/host/blk_host.c src/host/main.c src/host/bench.c src/tests/test_main.c
+            src/core/bootinfo.c src/core/pmm.c src/core/process.c
+HOST_SRC := $(CORE_SRC) src/host/hal_host.c src/host/blk_host.c src/host/process_host.c \
+            src/host/main.c src/host/bench.c src/tests/test_main.c
 
 KERNEL_SRC := $(CORE_SRC) src/arch/x86_64/kmain.c src/arch/x86_64/hal_x86.c \
               src/arch/x86_64/faults.c src/arch/x86_64/post.c src/arch/x86_64/libc.c \
               src/arch/x86_64/vga.c src/arch/x86_64/fb.c \
               src/arch/x86_64/input.c src/arch/x86_64/scroll.c \
               src/arch/x86_64/blk.c src/arch/x86_64/timer.c src/arch/x86_64/usermode.c \
-              src/arch/x86_64/process.c src/arch/x86_64/smp.c src/arch/x86_64/shell.c $(BUILD)/ap_trampoline_bin.c
+              src/arch/x86_64/process.c src/arch/x86_64/smp.c src/arch/x86_64/shell.c \
+              $(BUILD)/ap_trampoline_bin.c
 KERNEL_ASM := src/arch/x86_64/context.S src/arch/x86_64/faults.S src/arch/x86_64/entry64.S \
               src/arch/x86_64/usermode.S src/arch/x86_64/timer.S
 KERNEL_OBJ := $(patsubst %.c,$(BUILD)/kobj/%.o,$(KERNEL_SRC)) \
@@ -77,7 +82,7 @@ ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
         disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
         arm64 arm64-test arm64-uefi-test arm64-disk-test arm64-uefi-disk-test \
-        qemu-arm64 images iso
+        abi-test qemu-arm64 images iso
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
@@ -95,23 +100,14 @@ $(BUILD)/arm64/obj/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(ARM64_CC) --target=$(ARM64_TARGET) -c $< -o $@
 
-$(BUILD)/arm64/init.elf: src/user/init.c src/user/syscall.h src/user/user_arm64.ld
+$(BUILD)/arm64/%.elf: src/user/%.c src/user/syscall.h src/user/user_arm64.ld
 	@mkdir -p $(BUILD)/arm64
-	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c src/user/init.c \
-	  -o $(BUILD)/arm64/init.o
-	$(ARM64_LD) -T src/user/user_arm64.ld -o $@ $(BUILD)/arm64/init.o
+	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c $< -o $(BUILD)/arm64/$*.o
+	$(ARM64_LD) -T src/user/user_arm64.ld -o $@ $(BUILD)/arm64/$*.o
 
-$(BUILD)/arm64/ipc.elf: src/user/ipc.c src/user/syscall.h src/user/user_arm64.ld
-	@mkdir -p $(BUILD)/arm64
-	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c src/user/ipc.c \
-	  -o $(BUILD)/arm64/ipc.o
-	$(ARM64_LD) -T src/user/user_arm64.ld -o $@ $(BUILD)/arm64/ipc.o
-
-$(BUILD)/arm64/initrd.bin: $(BUILD)/arm64/init.elf $(BUILD)/arm64/ipc.elf \
-                           tools/mkinitrd.py
+$(BUILD)/arm64/initrd.bin: $(ARM64_USER_ELF) tools/mkinitrd.py
 	$(PYTHON) tools/mkinitrd.py --dir src/ramdisk --out $@ \
-	  --extra init.elf=$(BUILD)/arm64/init.elf \
-	  --extra ipc.elf=$(BUILD)/arm64/ipc.elf
+	  $(foreach p,$(USER_PROGS),--extra $(p).elf=$(BUILD)/arm64/$(p).elf)
 
 $(BUILD)/arm64/initrd_blob.c: $(BUILD)/arm64/initrd.bin tools/mkbinarray.py
 	$(PYTHON) tools/mkbinarray.py $< $@ initrd_bin
@@ -136,6 +132,8 @@ arm64-test: arm64
 	    grep -q "arm64 smp: hits=2/2/2/2" $(BUILD)/arm64.log && \
 	    grep -q "arm64 user: init.elf PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 procs: PASS" $(BUILD)/arm64.log && \
+	    grep -q "arm64 abi: PASS" $(BUILD)/arm64.log && \
+	    grep -Fq "abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK bad=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
 	    grep -Fq "procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK" $(BUILD)/arm64.log; then \
 	  echo "arm64 boot test: OK"; \
 	else \
@@ -145,6 +143,9 @@ arm64-test: arm64
 arm64-uefi-test: $(BUILD)/finte-arm64.iso
 	AAVMF_CODE=$(AAVMF_CODE) AAVMF_VARS=$(AAVMF_VARS) \
 	  bash tools/qemu_arm64_uefi_test.sh
+
+abi-test: $(BUILD)/finte.img
+	bash tools/qemu_abi_test.sh
 
 arm64-disk-test: arm64 $(BUILD)/disk-test.img
 	QEMU_ARM64=$(QEMU_ARM64) \
@@ -180,13 +181,13 @@ bootloader: $(BUILD)/boot.bin $(BUILD)/stage2.bin
 
 initrd: $(BUILD)/initrd.bin
 
-user: $(BUILD)/init.elf $(BUILD)/ipc.elf
+user: $(USER_ELF)
 
 $(BUILD)/finte: $(HOST_SRC) $(HEADERS) $(VERSION_HEADER)
 	@mkdir -p $(BUILD)
 	$(CC) $(HOST_CFLAGS) $(HOST_SRC) -o $@
 
-$(BUILD)/kobj/%.o: %.c $(HEADERS) src/arch/x86_64/process.h $(VERSION_HEADER)
+$(BUILD)/kobj/%.o: %.c $(HEADERS) $(VERSION_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(KCFLAGS) -c $< -o $@
 
@@ -236,21 +237,15 @@ $(BUILD)/uefi/BOOTX64.EFI: $(BUILD)/uefi/loader.obj $(BUILD)/uefi/jump.obj
 	$(LLD_LINK) /nologo /subsystem:efi_application /entry:efi_main \
 	  /nodefaultlib /out:$@ $^
 
-$(BUILD)/initrd.bin: $(wildcard src/ramdisk/*) $(BUILD)/init.elf $(BUILD)/ipc.elf tools/mkinitrd.py
+$(BUILD)/initrd.bin: $(wildcard src/ramdisk/*) $(USER_ELF) tools/mkinitrd.py
 	@mkdir -p $(BUILD)
 	$(PYTHON) tools/mkinitrd.py --dir src/ramdisk --out $@ \
-	  --extra init.elf=$(BUILD)/init.elf \
-	  --extra ipc.elf=$(BUILD)/ipc.elf
+	  $(foreach p,$(USER_PROGS),--extra $(p).elf=$(BUILD)/$(p).elf)
 
-$(BUILD)/init.elf: src/user/init.c src/user/user.ld
+$(BUILD)/%.elf: src/user/%.c src/user/syscall.h src/user/user.ld
 	@mkdir -p $(BUILD)
-	$(CC) $(USER_CFLAGS) -c src/user/init.c -o $(BUILD)/init.o
-	$(LD) -m elf_x86_64 -T src/user/user.ld -o $@ $(BUILD)/init.o
-
-$(BUILD)/ipc.elf: src/user/ipc.c src/user/ipc.ld
-	@mkdir -p $(BUILD)
-	$(CC) $(USER_CFLAGS) -c src/user/ipc.c -o $(BUILD)/ipc.o
-	$(LD) -m elf_x86_64 -T src/user/ipc.ld -o $@ $(BUILD)/ipc.o
+	$(CC) $(USER_CFLAGS) -c $< -o $(BUILD)/$*.o
+	$(LD) -m elf_x86_64 -T src/user/user.ld -o $@ $(BUILD)/$*.o
 
 $(BUILD)/finte.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin $(BUILD)/kernel64.bin \
                     $(BUILD)/initrd.bin $(BUILD)/uefi/BOOTX64.EFI \

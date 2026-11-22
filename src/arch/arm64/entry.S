@@ -141,3 +141,9 @@ arm64_sync_entry:
     mov x0, sp
     bl arm64_sync_handler
     RESTORE_FRAME
+
+.globl arm64_restore_frame
+.type arm64_restore_frame, %function
+arm64_restore_frame:
+    RESTORE_FRAME
+.size arm64_restore_frame, . - arm64_restore_frame

@@ -136,14 +136,19 @@ typedef struct fprogram {
 } fprogram_t;
 ```
 
-There is **no fork** and **no exec**:
+The core flow model does not create an implicit process tree:
 
-- Spawning is `finte_flow_create` + `finte_cap_install` + `finte_flow_start`.
-- The program image is immutable and linked into the image.
-- There is no address-space copy, no copy-on-write tree, no inherited fd table.
-- Authority is installed explicitly, not inherited from a parent.
+- Spawning a kernel flow is `finte_flow_create` + `finte_cap_install` +
+  `finte_flow_start`; authority is installed explicitly, not inherited.
+- The native user ABI now provides `fork`, `exec`, a per-process fd table,
+  anonymous `mmap` and SIGUSR1 delivery for demo processes. Fork copies the
+  address space and fd table; it is not a global Unix process tree.
+- The program image is still immutable; `exec` replaces the user space with a
+  freshly loaded image.
 
-This is the biggest usage difference from Unix. A Unix process is born with a uid, a cwd, a umask, signal dispositions and an fd table. A Finte flow is born with exactly the caps installed into its table and a fuel budget.
+This remains a major usage difference from Unix. A Finte flow is born with
+exactly the caps installed into its table and a fuel budget; user processes only
+inherit fds and mappings when they explicitly fork.
 
 Flow lifecycle:
 
@@ -530,7 +535,8 @@ variable:
 | user processes | private 4 KiB pages per process | own PML4/root, CPL3/EL0, supervisor kernel map |
 
 Native kernel flows are still ring-0 code and can touch the whole image.
-User processes use a private PML4 built by `src/arch/x86_64/process.c`:
+User processes use the shared `src/core/process.c` core with x86_64/arm64
+page-table backends:
 
 - The low 4 GiB identity map is shared as **supervisor-only** 2 MiB pages, so
   the kernel retains direct physical access while user code cannot read VGA,
@@ -539,9 +545,13 @@ User processes use a private PML4 built by `src/arch/x86_64/process.c`:
   copied into freshly zeroed pages, a 16 KiB stack is mapped just below
   4 GiB + 64 MiB, an optional shared page is mapped at 4 GiB + 128 MiB, and a
   page-scoped arena window is mapped at 4 GiB + 192 MiB.
-- The PML4/PDPT/PD/PT pages, user data pages and the process record come from
-  the kernel page heap. Teardown switches back to the kernel CR3, then returns
-  every tracked page. Flow stacks are also recycled.
+- The page tables, user data pages and process record come from the PMM. The
+  address space is refcounted and Flow-owned; flow death queues it for release
+  after switching to the scheduler root, so page tables are freed even without
+  `proc_destroy()`. Flow stacks are freed to the PMM when active.
+- Code is mapped RX and data/stack/shared/arena/mmap pages RW-NX. arm64 uses
+  per-process ASIDs and ASID invalidation; x86_64 uses non-global PTEs and CR3
+  reloads on root switches plus local `invlpg` on unmap.
 - User pointers go through `finte_user_copy_in` / `finte_user_copy_out`, which
   check the user range, walk every page, require the user and write bits as
   needed, and copy through the physical mappings.
@@ -550,8 +560,9 @@ User processes use a private PML4 built by `src/arch/x86_64/process.c`:
   or free inside it.
 - A user-mode fault (#PF, #GP, #UD) prints the PID, faulting RIP and CR2, then
   kills only that flow; kernel faults still panic.
-- User processes currently run on the BSP because the kernel uses one TSS.
-  Kernel flows keep using all CPUs.
+- User processes run on all CPUs: each CPU has its own GDT/TSS (x86) or
+  TPIDR_EL1 context (arm64). The process ABI suite is pinned to the BSP on
+  x86_64 and runs 4 CPUs on arm64.
 
 The native user ABI is `int 0x80` with `rax` as the call number:
 

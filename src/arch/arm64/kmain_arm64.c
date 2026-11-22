@@ -311,6 +311,11 @@ void kmain_arm64(uint64_t boot_arg, uint64_t magic)
                      prc == 0 ? "PASS" : "FAIL");
     hal_console_write(buf, (size_t)n);
 
+    int arc = finte_proc_abi_test();
+    n = finte_format(buf, sizeof(buf), "arm64 abi: %s\n",
+                     arc == 0 ? "PASS" : "FAIL");
+    hal_console_write(buf, (size_t)n);
+
     hal_irq_disable();
-    hal_exit((rc == 0 && urc == 0 && prc == 0) ? 0 : 1);
+    hal_exit((rc == 0 && urc == 0 && prc == 0 && arc == 0) ? 0 : 1);
 }

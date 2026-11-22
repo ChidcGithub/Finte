@@ -141,7 +141,8 @@ static fcpu_t *thread_cpu(fthread_t *t)
 /* Called with the state lock held. Takes the target queue lock. */
 static void enqueue_locked(fthread_t *t)
 {
-    if (!t || !t->in_use || !t->flow || t->queued) {
+    if (!t || !t->in_use || !t->flow || t->queued ||
+        t->state == FINTE_THREAD_DEAD || t->state == FINTE_THREAD_FREE) {
         return;
     }
     fcpu_t *cpu = thread_cpu(t);

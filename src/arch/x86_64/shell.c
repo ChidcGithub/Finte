@@ -1268,6 +1268,16 @@ static void cmd_services(const sh_ctx_t *ctx)
     cmd_procs(ctx);
 }
 
+static void cmd_abi(const sh_ctx_t *ctx)
+{
+    (void)ctx;
+    sh_puts("starting process ABI tests...\n");
+    int rc = finte_proc_abi_test();
+    sh_printf("abi: %s\n", rc == 0 ? "PASS" : "FAIL");
+}
+
+
+
 static void cmd_ps(const sh_ctx_t *ctx)
 {
     (void)ctx;
@@ -1621,6 +1631,8 @@ static const sh_command_t sh_command_table[] = {
     { "parts", "list partitions", cmd_parts },
     { "preempt", "prove timer preemption with two flows", cmd_preempt },
     { "procs", "run isolated user services (IPC/arena/time demo)", cmd_procs },
+    { "abi", "run process ABI tests (fd/mmap/fork/exec/signal)", cmd_abi },
+
     { "ps", "list live flows", cmd_ps },
     { "pwd", "current directory", cmd_pwd },
     { "reboot", "reset the machine", cmd_reboot },

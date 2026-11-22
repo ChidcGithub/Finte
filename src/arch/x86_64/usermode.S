@@ -50,7 +50,12 @@ isr128:
     push %r15
     mov %rsp, %rdi
     call usermode_syscall
-    mov %rax, 112(%rsp)      /* saved RAX slot: 14 * 8 */
+    jmp um_restore
+.size isr128, . - isr128
+
+.globl um_restore
+.type um_restore, @function
+um_restore:
     pop %r15
     pop %r14
     pop %r13
@@ -67,6 +72,21 @@ isr128:
     pop %rbx
     pop %rax
     iretq
-.size isr128, . - isr128
+.size um_restore, . - um_restore
+
+.globl um_enter_frame
+.type um_enter_frame, @function
+um_enter_frame:
+    /* rdi = saved 160-byte frame, rsi = kernel stack top */
+    sub $160, %rsi
+    mov %rdi, %r8
+    mov %rsi, %r9
+    mov %r9, %rdi
+    mov %r8, %rsi
+    mov $20, %rcx
+    rep movsq
+    mov %r9, %rsp
+    jmp um_restore
+.size um_enter_frame, . - um_enter_frame
 
 .section .note.GNU-stack, "", @progbits

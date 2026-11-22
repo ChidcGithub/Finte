@@ -287,7 +287,7 @@ real.
   `fthread_t`, that the Thread points back to the Flow, that its state is
   `CREATED` before start and `READY` after start, and that
   `finte_thread_current()` identifies the running Thread.
-- `make test`: 23 host tests pass.
+- `make test`: 24 host tests pass.
 - `make selfcheck`: 147 core checks pass.
 - `make qemu-test` / `make qemu-uefi-test`: Thread dispatch, blocking and
   preemption under BIOS and UEFI.

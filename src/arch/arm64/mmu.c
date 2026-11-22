@@ -171,11 +171,44 @@ uint64_t *arm64_mmu_kernel_l1(void)
     return g_l1;
 }
 
-void arm64_mmu_set_root(uint64_t root)
+void arm64_mmu_set_ttbr0(uint64_t token)
+{
+    if (!token) {
+        return;
+    }
+    __asm__ volatile("msr ttbr0_el1, %0; dsb ish; isb"
+                     : : "r"(token) : "memory");
+}
+
+void arm64_mmu_set_root_asid(uint64_t root, uint32_t asid)
 {
     if (!root) {
         return;
     }
-    __asm__ volatile("msr ttbr0_el1, %0; dsb ish; tlbi vmalle1is; dsb ish; isb"
-                     : : "r"(root) : "memory");
+    uint64_t ttbr = (root & 0x0000FFFFFFFFF000ull) |
+                    ((uint64_t)(asid & 0xFFu) << 48);
+    arm64_mmu_set_ttbr0(ttbr);
+}
+
+void arm64_mmu_set_root(uint64_t root)
+{
+    arm64_mmu_set_root_asid(root, 0);
+}
+
+void arm64_mmu_flush_asid(uint32_t asid)
+{
+    if (asid == 0) {
+        __asm__ volatile("dsb ish; tlbi vmalle1is; dsb ish; isb"
+                         : : : "memory");
+        return;
+    }
+    uint64_t operand = (uint64_t)(asid & 0xFFu) << 48;
+    __asm__ volatile("dsb ish; tlbi aside1is, %0; dsb ish; isb"
+                     : : "r"(operand) : "memory");
+}
+
+void arm64_mmu_flush_all(void)
+{
+    __asm__ volatile("dsb ish; tlbi vmalle1is; dsb ish; isb"
+                     : : : "memory");
 }

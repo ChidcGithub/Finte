@@ -8,6 +8,7 @@
 
 typedef struct fflow fflow_t;
 typedef struct fthread fthread_t;
+struct faddr_space;
 typedef struct fchan fchan_t;
 typedef struct farena farena_t;
 typedef struct ffile ffile_t;
@@ -100,6 +101,7 @@ struct fthread {
     struct fthread *next_throttle;
     struct fthread *next_sleep;
     struct fthread *wait_next;
+    struct faddr_space *release_space;
     fhal_ctx_t *ctx;
 };
 
@@ -108,6 +110,8 @@ struct fflow {
     uint8_t state;
     uint8_t persona;
     uint8_t started;
+    uint8_t abort;
+    uint8_t reserved0;
     uint16_t slot;
     uint16_t cap_count;
     uint32_t fuel;
@@ -121,6 +125,7 @@ struct fflow {
     fflow_stats_t stats;
     flinux_state_t linux;
     void *user;
+    struct faddr_space *space;
     char name[FINTE_NAME_MAX];
 };
 

@@ -9,6 +9,7 @@
 #include "finte/verb.h"
 #include "finte/compat_linux.h"
 #include "finte/disk.h"
+#include "finte/process.h"
 #include "finte/usermode.h"
 
 #endif /* FINTE_H */

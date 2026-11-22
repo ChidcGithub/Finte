@@ -121,8 +121,6 @@ void arm64_irq_handler(uint64_t *frame)
     }
 }
 
-extern uint64_t arm64_process_syscall(uint64_t *frame);
-
 void arm64_sync_handler(uint64_t *frame)
 {
     uint64_t esr = frame[FRAME_ESR];
@@ -133,7 +131,16 @@ void arm64_sync_handler(uint64_t *frame)
     int from_el0 = (spsr & 0xFu) == 0;
 
     if (from_el0 && ec == 0x15u) { /* SVC from AArch64 EL0 */
-        frame[0] = arm64_process_syscall(frame);
+        fflow_t *f = finte_flow_current();
+        fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+        uint64_t nr = frame[8];
+        uint64_t a0 = frame[0];
+        uint64_t a1 = frame[1];
+        uint64_t a2 = frame[2];
+        frame[0] = finte_proc_syscall(p, nr, a0, a1, a2, frame);
+        if (p) {
+            finte_process_signal_check(p, frame);
+        }
         /* SVC's preferred return address already points past the
          * instruction; do not advance ELR again. */
         return;

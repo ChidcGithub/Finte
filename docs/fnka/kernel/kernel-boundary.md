@@ -180,9 +180,12 @@ services, not the interrupt controller, timer or boot console.
 
 ## 9. Test evidence
 
-- `src/arch/x86_64/process.c`: ring-3 process creation, page tables, user copy
-  validation and user faults.
+- `src/core/process.c` plus `src/arch/x86_64/process.c` and
+  `src/arch/arm64/process.c`: ELF loading, fd table, mmap, fork, exec, signals,
+  cap transfer, page tables, user copy validation and user faults.
+- `make abi-test`: x86_64 process ABI suite on one CPU.
+- `make arm64-test` / `make arm64-uefi-test`: EL0 `init.elf`, `procs`, the same
+  process ABI suite on 4 CPUs, and user-fault kill.
 - `procs` / `services`: isolation, IPC, shared memory, Arena caps and fault
   kill.
-- `make qemu-uefi-test`: UEFI boot and shell.
-- No test yet for a user-space driver or arm64 user mode.
+- No test yet for a user-space driver or user-space IRQ delivery.

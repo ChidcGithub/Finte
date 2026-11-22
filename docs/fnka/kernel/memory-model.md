@@ -1,8 +1,9 @@
 # Memory model
 
 > **Status:** Partial — a shared physical page manager consumes Boot Protocol
-> v1, and both x86_64 and arm64 have private user page tables at 4–5 GiB.
-> There is no demand paging, swap, ASID allocator or general user `mmap`.
+> v1, and both x86_64 and arm64 have Flow-owned private user page tables at
+> 4–5 GiB with anonymous `mmap` and arm64 ASIDs. There is no demand paging,
+> swap or COW.
 >
 > **Normative for:** physical memory, virtual address spaces, kernel/user
 > layout, allocation and mapping ownership.
@@ -63,9 +64,10 @@ Each user process gets a private PML4:
 - the low identity map is supervisor-only, so ring-3 cannot read kernel memory
   through it.
 
-User page-table entries are present, writable and user-accessible (`0x7`) for
-the demo mappings. There is no NX policy, copy-on-write, demand paging or
-guard-page enforcement beyond the address-range checks.
+User page-table entries are present, user-accessible and carry RW/NX per
+mapping: code is RX, data/stack/mmap pages are RW-NX, and `EFER.NXE` is enabled
+per CPU. There is no copy-on-write, demand paging or guard-page enforcement
+beyond the address-range checks.
 
 ## 3. arm64 virtual layout
 
@@ -84,13 +86,16 @@ static identity map with 2 MiB blocks:
 The kernel uses PMM-backed pages, a 32 KiB flow stack per `hal_ctx_create()`,
 16 KiB static AP stacks, and the same Arena/object pools as the shared core.
 
-Each arm64 process root copies the supervisor-only kernel L1 entries, replaces
+Each process root copies the supervisor-only kernel L1 entries, replaces
 `L1[4]` with a private L2 table for the 4–5 GiB window, and allocates L3 tables
-on demand for 4 KiB user pages. The private root is loaded into `TTBR0_EL1` on
-context switch; the kernel remains mapped through the shared low identity map.
-Page tables and user pages are PMM-backed and tracked for `proc_destroy()`.
-There is no ASID allocator or TLB-shootdown protocol yet; switches use
-`tlbi vmalle1is`, and user pages are RWX.
+on demand for 4 KiB user pages. `src/core/process.c` owns this logic and calls
+the arch backend for page tables, root activation and trap frames. Page tables
+and user pages are PMM-backed and tracked in a refcounted `faddr_space_t`.
+
+arm64 tags `TTBR0_EL1` with an 8-bit process ASID and invalidates the ASID on
+activation and teardown; x86_64 uses non-global user PTEs and reloads CR3 on
+every root switch. User pages are RX/RW-NX: code is read-only and executable,
+data/stack/mmap pages are writable and non-executable.
 
 ## 4. Kernel heap and object pools
 
@@ -130,12 +135,17 @@ never treated as user pointers.
 
 - Kernel objects are reference counted through node handles.
 - A Flow owns its capability table; dropping the Flow drops its caps.
-- A process owns its page tables and mapped user pages; `proc_destroy()`
-  releases them. `finte_flow_exit()` does not release the address space itself.
+- A Flow owns a reference to its `faddr_space_t`. `finte_flow_exit()` queues
+  the space for release after switching to the scheduler root; page tables are
+  freed even if `proc_destroy()` is not called. `proc_destroy()` frees the
+  process object and any dead fork children.
+- A process owns its fd table (initrd/file capabilities), anonymous `mmap`
+  mappings and the fixed shared/arena mappings. Fork copies the fd table and
+  address space; exec builds a fresh space and closes non-console fds.
 - An Arena owns its backing pages until the Arena is destroyed.
 - A Channel owns queued messages and their attached capability references.
-- There is no general user-accessible `mmap`/`munmap`; only the demo Arena map
-  and fixed shared page exist.
+- Anonymous `mmap`/`munmap` exist with a 64-page-per-mapping cap; there is no
+  file-backed mmap, COW or demand paging.
 
 ## 7. Target model
 
@@ -166,12 +176,13 @@ The target contract requires:
 
 - PMM is a bitmap allocator with no per-page database, reclaim or swap.
 - PMM ranges are bounded: x86 to the 1 GiB identity map, arm64 to 4 GiB.
-- arm64 has an identity kernel map plus per-process user roots, but no ASID
-  allocator or TLB-shootdown protocol.
-- No NX or read-only user mappings on either architecture.
-- No demand paging or COW.
-- No general `mmap`/`munmap`.
-- No TLB shootdown protocol for user mappings.
+- arm64 has an 8-bit ASID allocator and per-ASID broadcast invalidation;
+  x86_64 relies on non-global PTEs and CR3 reloads, not an IPI shootdown, under
+  the one-thread-per-space invariant.
+- User mappings are RX/RW-NX and write-protected code, but fork eagerly copies
+  pages and there is no COW.
+- Anonymous `mmap`/`munmap` are capped at 64 pages per mapping; no file-backed
+  mmap or demand paging.
 - No IOMMU or DMA address-space isolation.
 - The x86 user low identity map covers 4 GiB supervisor, not a minimal kernel
   window.
@@ -183,9 +194,9 @@ The target contract requires:
 - PMM reclaim, page database and memory-pressure policy.
 - Kernel/user address layout for both architectures.
 - Whether the kernel keeps a full identity map or a minimal direct map.
-- Page-table activation and TLB shootdown across CPUs.
+- Copy-on-write fork and cross-CPU TLB shootdown for shared spaces.
 - Guard pages, stack growth and fault handling.
-- Mapping rights and the native `mmap` contract.
+- File-backed `mmap` and a fuller native mapping contract.
 - Arena-to-address-space mapping and revocation.
 - DMA buffer pinning and IOMMU integration.
 - Memory pressure, reclaim and out-of-memory policy.
@@ -204,4 +215,8 @@ The target contract requires:
   pages and the isolated `procs` demo.
 - `make arm64-uefi-test`: same checks plus PMM counts from the UEFI memory map.
 - `make arm64-disk-test`: virtio-mmio lfc1/ext4/NTFS reads (legacy + modern).
-- No arm64 `fork`/general `mmap`, TLB-shootdown or reclaim test yet.
+- `make abi-test`: x86_64 fd table, mmap, fork/exec, signal, cap transfer,
+  churn, blocked-flow abort and RX/RW-NX PTE checks.
+- `make arm64-test`: the same shared ABI suite on 4 CPUs plus the EL0/procs
+  demos and Flow-owned space release.
+- No COW, shared-address-space TLB shootdown or reclaim test yet.

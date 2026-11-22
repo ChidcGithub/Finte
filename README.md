@@ -20,7 +20,7 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 
 ## Status
 
-- **v0.0.2** (nickname **base**), built as `0.0.2-<short commit>`, 23 self-tests passing on Linux/WSL and Windows.
+- **v0.0.2** (nickname **base**), built as `0.0.2-<short commit>`, 24 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, PE32+ UEFI loaders for x86_64 and arm64, and FAT ESPs. `make images` produces x86_64 BIOS/UEFI hybrid media and arm64 UEFI ISO/IMG media.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
@@ -35,6 +35,8 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 - **Native CAS**: `cas` parses polynomial expressions with exact rational coefficients and simplifies, differentiates (`cas diff`) or evaluates (`cas eval`) them entirely in the kernel — no external tools, no floating point.
 - **Startup performance**: the GOP console draws glyphs with packed 64-bit stores and skips clearing rows that are already blank. With serial disabled, the BIOS path reaches the shell in about 0.8 seconds; UEFI wall time is dominated by OVMF firmware.
 - **Isolated user processes**: `user`, `procs` and `services` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code, data and page-scoped arena window; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, page-level arena caps, and process-kill on a kernel-memory fault. The same demo now runs on x86_64 ring 3 (`int 0x80`) and arm64 EL0 (`svc #0`).
+- **Shared process core**: ELF loading, user-copy validation, syscall dispatch, fault policy, fd tables, `mmap`/`munmap`, `fork`, `exec`, signal delivery, user-to-user cap transfer and the `init`/`procs` orchestration live in `src/core/process.c`; x86_64 and arm64 keep only page-table, root-switch, trap-frame and EL0/ring-3 entry backends.
+- **Flow-owned address spaces**: a refcounted `faddr_space_t` is owned by the Flow. Flow exit queues it for release after switching to the scheduler root, so page tables are freed even if the caller forgets `proc_destroy()`. arm64 uses per-process ASIDs and ASID/TLB invalidation; x86_64 relies on non-global user PTEs and CR3 reload on every root switch. User pages are RX/RW-NX with read-only code mappings.
 - **3-strike watchdog**: unexpected user faults, scheduler deadlocks and disk-sync failures add a strike. On the third, the kernel prints a red panic and powers off. `selfcheck` and the expected `procs` fault are excluded. `watchdog` shows the state, `watchdog test` injects a strike, and `watchdog reset` clears it.
 - **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; the arm64 QEMU `virt` backend has MMU/page tables, exception vectors, GICv2, the generic timer IRQ, PSCI CPU_ON, per-CPU state, EL0 processes with `svc #0`, and a legacy/modern virtio-mmio block driver. `make arm64-test` runs 4 CPUs, the 147 core checks, MMU/timer/SMP probes, per-CPU flow distribution, `init.elf` at EL0 and the full `procs` IPC demo. `make arm64-uefi-test` runs the same platform checks under AAVMF; `make arm64-disk-test` and `make arm64-uefi-disk-test` mount lfc1/ext4/NTFS over virtio.
 - **Ring 3 / ELF64**: `user` loads `init.elf` from the initrd as an isolated process, enters CPL3 through a GDT/TSS and `int 0x80` gate, and returns to the shell when the process exits.
@@ -72,7 +74,7 @@ make image          # hybrid BIOS + UEFI USB image
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
 make user           # build init.elf + ipc.elf (packed into the initrd)
-make test           # 23 extended core self-tests
+make test           # 24 extended core self-tests
 make selfcheck      # startup POST/self-check suite
 make qemu           # BIOS boot, serial console (4 CPUs by default)
 make qemu-uefi      # UEFI/OVMF boot, serial console
@@ -85,7 +87,8 @@ make demo           # host-side native pipeline
 make compat         # host-side Linux persona
 make bench          # host microbenchmarks
 make arm64          # arm64 QEMU virt kernel (build/finte-arm64.elf)
-make arm64-test     # 4-CPU MMU/timer/SMP + EL0 user/procs + 147 core checks
+make abi-test       # x86_64 process ABI (fd/mmap/fork/exec/signal/cap/churn)
+make arm64-test     # 4-CPU MMU/timer/SMP + EL0 user/procs/ABI + 147 core checks
 make arm64-uefi-test # same platform checks through AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
 make arm64-uefi-disk-test # arm64 UEFI disk boot through AAVMF
@@ -232,7 +235,7 @@ A conventional Unix core gives a program a process, an fd table, a uid, and a pa
 
 1. **Authority is a capability, not an identity.** A flow can only touch a node if it holds a capability for it, with the required rights. There is no `uid` check in the core, and no global "open by path" operation.
 2. **Execution is finite.** Every flow has a fuel budget. The scheduler charges fuel per slice, throttles exhausted flows, and refills them in epochs. "Run forever" is a service pattern, not the default.
-3. **Composition is a graph, not a tree.** There is no `fork()` and no `exec()`. The boot image spawns flows from immutable program images and hands out capabilities explicitly. Bulk data moves by transferring a capability to an arena, not by copying buffers through the kernel.
+3. **Composition is a graph, not a tree.** The boot image spawns flows from immutable program images and hands out capabilities explicitly. The demo ABI now provides user `fork`/`exec` and a process fd table, but the kernel itself still composes services through capabilities and arenas rather than a global process tree.
 
 The core has **no path namespace**. Names and directories are a policy of the persona using the core. That is why the Linux personality can provide `/hello.txt` without the core knowing what a path is.
 
@@ -485,20 +488,22 @@ The performance argument is structural: handles are direct indexes, capability c
 - Linux x86_64 persona subset and RAMFS.
 - Host simulator on Linux (ucontext) and Windows (fibers).
 - Startup POST (9 POST checks) and 147 core checks in the kernel.
-- 23 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
+- 24 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
   writable-lfc1 persistence, timer-preemption, boot protocol v1, ring-3 tests,
-  arm64 EL0 user/procs tests, and arm64 virtio disk tests.
+  x86_64 and arm64 process ABI suites (fd table, mmap, fork, exec, signals,
+  cap transfer, churn and blocked-flow abort), arm64 EL0 user/procs tests, and
+  arm64 virtio disk tests.
 
 **Deliberately not here yet**
 
-- **A general process ABI.** Per-process page tables, ring-3 code/data/stack
-  isolation, user faults, message passing, a shared page and `time`/`sleep` are
-  in place. There is still no `fork`, `exec`, signal delivery, per-process file
-  descriptor table, general `mmap`, or user-to-user capability transfer.
-- **Flow-owned address spaces.** `proc_destroy()` returns process page tables
-  and user pages to the PMM, and flow stacks are freed when the PMM is active,
-  but teardown is still caller-driven after `finte_run()`; `finte_flow_exit()`
-  does not itself release a process address space.
+- **A complete process ABI.** A per-process fd table, `fork`, `exec`, anonymous
+  `mmap`/`munmap`, SIGUSR1 delivery and user-to-user cap transfer are in place.
+  Fork eagerly copies pages (no COW), mappings are capped at 64 pages, signals
+  do not yet cover the full POSIX set, and there is no `waitpid`, job control or
+  general fd table for the Linux persona.
+- **SMP fork/sleep stress.** The x86 process ABI suite is pinned to the BSP and
+  the arm64 suite runs 4 CPUs. Simultaneous fork + sleep + migration is not yet
+  a claimed stress-tested configuration.
 - **Fine-grained SMP scalability.** Up to 8 CPUs are started, but flows keep a
   static default affinity, verbs take one global core lock, and work stealing
   is currently disabled. `finte_sched_migrate()` can move flows between CPUs;
