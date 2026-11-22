@@ -1423,6 +1423,34 @@ static void cmd_compat(const sh_ctx_t *ctx)
               (long long)g->pid, g->sysname, g->machine);
 }
 
+static void cmd_hwtest(const sh_ctx_t *ctx)
+{
+    (void)ctx;
+    sh_puts("[hw] validation start\n");
+    int ok = 1;
+
+    fselftest_report_t report;
+    int sc = finte_selftest_run(2, &report);
+    sh_printf("[hw] selfcheck=%s sections=%u checks=%u failures=%u\n",
+              sc == 0 ? "OK" : "FAIL", report.sections, report.checks,
+              report.failures);
+    ok = ok && sc == 0 && report.failures == 0;
+
+    int prc = finte_proc_demo();
+    sh_printf("[hw] procs=%s\n", prc == 0 ? "OK" : "FAIL");
+    ok = ok && prc == 0;
+
+    int urc = finte_usermode_run("init.elf");
+    sh_printf("[hw] user=%s\n", urc == 0 ? "OK" : "FAIL");
+    ok = ok && urc == 0;
+
+    fmount_info_t mounts[FMOUNT_MAX];
+    int nmounts = finte_disk_mount_list(mounts, FMOUNT_MAX);
+    sh_printf("[hw] cpus=%u disks=%d mounts=%d\n", (unsigned)hal_cpu_count(),
+              finte_disk_count(), nmounts > 0 ? nmounts : 0);
+    sh_printf("[hw] %s\n", ok ? "PASS" : "FAIL");
+}
+
 static void cmd_selfcheck(const sh_ctx_t *ctx)
 {
     (void)ctx;
@@ -1622,6 +1650,7 @@ static const sh_command_t sh_command_table[] = {
     { "head", "first lines of a file", cmd_head },
     { "help", "this list; -v shows descriptions", cmd_help },
     { "hexdump", "hex and ASCII dump", cmd_hexdump },
+    { "hwtest", "physical-hardware validation suite", cmd_hwtest },
     { "ls", "list ramdisk or mounted files", cmd_ls },
     { "mem", "heap and core counters", cmd_mem },
     { "mkdir", "create a directory", cmd_mkdir },

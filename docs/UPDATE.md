@@ -71,6 +71,21 @@ Short notes only. GitHub releases carry the per-commit changes.
   signals immediately so a CPU-bound loop is interrupted without syscalls.
   `cputimer.elf` checks CPU-vs-wall semantics, a pure spin loop, repeated
   intervals and invalid selectors; the ABI line reports `cputime=OK`.
+- Added demand paging and swap. `mmap` and `mmap_file` now reserve mappings
+  without allocating physical pages; user faults fill anonymous pages with
+  zero, load file-backed pages from the open description, or restore a page
+  from a swap slot. `mincore` reports residency, `MADV_PAGEOUT` writes resident
+  pages to a raw block swap device and invalidates their PTEs, and swapped
+  pages are reference-counted so fork children can share the slot. `swapon`
+  uses a dedicated raw block device; the QEMU tests attach `build/swap.img` as
+  `hd1`. `vm.elf` checks lazy residency, 16-page pageout/fault-in with intact
+  patterns, private file mappings across pageout and swapoff; the ABI line
+  reports `vm=OK`.
+- Added the `hwtest` shell command and
+  `docs/hardware-validation.md`. `hwtest` runs the 147 core checks, the
+  four-process demo, `init.elf` and a CPU/disk/mount report, then prints
+  `[hw] PASS`; the CLI boot test now executes it. The actual physical-laptop
+  run remains a manual step and is recorded as pending in the results table.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

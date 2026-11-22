@@ -60,7 +60,7 @@ make qemu           # BIOS boot, serial console (SMP=4 by default)
 make qemu-uefi      # OVMF UEFI boot, serial console
 make qemu-test      # BIOS CLI boot test
 make qemu-uefi-test # UEFI CLI boot test
-make abi-test       # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/cap/churn suite
+make abi-test       # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn suite
 make arm64-test     # arm64 4-CPU MMU/GIC/timer/SMP + EL0 user/procs/ABI
 make arm64-uefi-test # same arm64 checks under AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
@@ -331,7 +331,8 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 - UEFI disk manager: AHCI, MBR, mount/read/fsinfo/umount for lfc1, ext4 and
   NTFS from `hd1`; writable lfc1.
 - x86_64 process ABI: 1 CPU, a dynamic fd table with shared open-file
-  descriptions, dup/dup2/fcntl(F_DUPFD), anonymous and file-backed private mmap,
+  descriptions, dup/dup2/fcntl(F_DUPFD), demand-paged anonymous and
+  file-backed private mmap, mincore, MADV_PAGEOUT and raw-block swap,
   copy-on-write fork with fd inheritance, blocking waitpid with status/reaping,
   exec preserving non-CLOEXEC fds, SIGUSR1 delivery, signal masks/pending
   sets/default actions, SIGSTOP/SIGCONT job control with waitpid

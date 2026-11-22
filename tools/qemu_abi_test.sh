@@ -12,7 +12,7 @@ LOG=build/abi-x86.log
 QEMULOG=build/abi-x86-qemu.log
 PROBELOG=build/abi-x86-probe.log
 FIFO=${TMPDIR:-/tmp}/finte-abi-$$.in
-ABI_LINE="abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK cputime=OK fdtab=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK"
+ABI_LINE="abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK cputime=OK fdtab=OK vm=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK"
 
 run_once() {
     rm -f "$LOG" "$QEMULOG" "$PROBELOG" "$PROBELOG.qemu" "$FIFO"
@@ -23,6 +23,7 @@ run_once() {
     qemu-system-x86_64 -m 256M -smp 1 -machine pc -accel tcg \
         -drive if=floppy,format=raw,file=build/finte-bios.img -boot a \
         -drive format=raw,file=build/disk-test.img,if=ide,index=0,media=disk \
+        -drive format=raw,file=build/swap.img,if=ide,index=1,media=disk \
         -display none -monitor none -no-reboot -snapshot \
         -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
         -serial stdio -D "$QEMULOG" -d guest_errors < "$FIFO" > "$LOG" 2>&1 &

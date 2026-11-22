@@ -48,7 +48,9 @@ run_direct() {
             -nographic -monitor none -no-reboot $extra \
             -kernel build/finte-arm64.elf \
             -drive if=none,id=hd0,format=raw,file="$IMG" \
-            -device virtio-blk-device,drive=hd0 > "$log" 2>&1 || true
+            -device virtio-blk-device,drive=hd0 \
+            -drive if=none,id=hd1,format=raw,file=build/swap.img \
+            -device virtio-blk-device,drive=hd1 > "$log" 2>&1 || true
         check_log "$log" "$mode" || exit 1
     done
 }
@@ -69,7 +71,9 @@ run_uefi() {
         -drive if=pflash,format=raw,unit=1,file=build/AAVMF_VARS_DISK.fd \
         -cdrom build/finte-arm64.iso \
         -drive if=none,id=hd0,format=raw,file="$IMG" \
-        -device virtio-blk-device,drive=hd0 > "$log" 2>&1 || true
+        -device virtio-blk-device,drive=hd0 \
+        -drive if=none,id=hd1,format=raw,file=build/swap.img \
+        -device virtio-blk-device,drive=hd1 > "$log" 2>&1 || true
     check_log "$log" uefi || exit 1
 }
 

@@ -63,6 +63,8 @@
 #define FPROC_SYS_SERVICE_UNREG 17
 #define FPROC_SYS_DYNSVC       18
 #define FPROC_SYS_MMAP_FILE    19
+#define FPROC_SYS_MINCORE      27
+#define FPROC_SYS_MADVISE      28
 #define FPROC_SYS_DUP          32
 #define FPROC_SYS_DUP2         33
 #define FPROC_SYS_GETITIMER    36
@@ -75,6 +77,9 @@
 #define FPROC_WCONTINUED       4
 #define FPROC_SYS_EXIT         60
 #define FPROC_SYS_FCNTL        72
+#define FPROC_SYS_SWAPON       167
+#define FPROC_SYS_SWAPOFF      168
+#define FPROC_MADV_PAGEOUT     21
 #define FPROC_F_DUPFD          0
 #define FPROC_F_GETFD          1
 #define FPROC_F_SETFD          2
@@ -123,13 +128,23 @@ typedef struct ffd {
     uint8_t fd_flags;
 } ffd_t;
 
+#define FPROC_MAP_ANON         0
+#define FPROC_MAP_FILE         1
+#define FPROC_MAP_INITRD       2
+
 typedef struct fmap {
     uint8_t used;
+    uint8_t kind;
     uint8_t prot;
+    uint8_t pad;
     uint16_t page_count;
+    uint16_t pad2;
     uint64_t va;
     uint64_t len;
-    uint64_t pa[FPROC_MAX_MAP_PAGES];
+    fhandle_t file;
+    const uint8_t *data;
+    uint64_t file_size;
+    uint64_t swapped[FPROC_MAX_MAP_PAGES]; /* slot + 1, 0 = resident */
 } fmap_t;
 
 typedef struct fsig {
@@ -261,6 +276,7 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
 int finte_user_copy_in(fflow_t *f, void *dst, uint64_t uva, size_t len);
 int finte_user_copy_out(fflow_t *f, uint64_t uva, const void *src, size_t len);
 void finte_user_fault(uint64_t vec, uint64_t rip, uint64_t cr2);
+int finte_proc_page_fault(fproc_t *p, uint64_t va, int write);
 void finte_process_signal_check(fproc_t *p, void *frame);
 int finte_proc_signal_pending(const fproc_t *p);
 void finte_proc_timer_tick(void);

@@ -800,6 +800,71 @@ struct ffile_desc {
 
 static ffile_desc_t g_ofds[FPROC_MAX_OFDS];
 
+#define FPROC_SWAP_SLOTS 256
+#define FPROC_SWAP_BYTES ((uint64_t)FPROC_SWAP_SLOTS * 4096u)
+
+static char g_swap_path[FDISK_PATH_MAX];
+static uint16_t g_swap_refs[FPROC_SWAP_SLOTS];
+static int g_swap_dev = -1;
+static uint32_t g_swap_sectors_per_page = 8;
+
+static int swap_active(void)
+{
+    return g_swap_dev >= 0;
+}
+
+static int swap_io(int slot, void *buf, int write)
+{
+    if (!swap_active() || slot < 0 || slot >= FPROC_SWAP_SLOTS) {
+        return -1;
+    }
+    uint64_t lba = (uint64_t)slot * g_swap_sectors_per_page;
+    int rc = write ? finte_disk_block_write(g_swap_path, lba, buf,
+                                            g_swap_sectors_per_page)
+                   : finte_disk_block_read(g_swap_path, lba, buf,
+                                            g_swap_sectors_per_page);
+    return rc == 0 ? 0 : -1;
+}
+
+static int swap_slot_alloc(void)
+{
+    int slot = -1;
+    uint64_t flags = proc_lock();
+    for (int i = 0; i < FPROC_SWAP_SLOTS; i++) {
+        if (g_swap_refs[i] == 0) {
+            g_swap_refs[i] = 1;
+            slot = i;
+            break;
+        }
+    }
+    proc_unlock(flags);
+    return slot;
+}
+
+static void swap_slot_ref(int slot)
+{
+    if (slot < 0 || slot >= FPROC_SWAP_SLOTS) {
+        return;
+    }
+    uint64_t flags = proc_lock();
+    if (g_swap_refs[slot] != 0 && g_swap_refs[slot] != 0xFFFFu) {
+        g_swap_refs[slot]++;
+    }
+    proc_unlock(flags);
+}
+
+static void swap_slot_put(int slot)
+{
+    if (slot < 0 || slot >= FPROC_SWAP_SLOTS) {
+        return;
+    }
+    uint64_t flags = proc_lock();
+    if (g_swap_refs[slot] > 0) {
+        g_swap_refs[slot]--;
+    }
+    proc_unlock(flags);
+}
+
 static ffile_desc_t *ofd_alloc(uint8_t kind)
 {
     uint64_t flags = proc_lock();
@@ -1177,15 +1242,6 @@ static int fd_read(fproc_t *p, int fd, void *dst, size_t len)
     return n;
 }
 
-static int fd_pread(fproc_t *p, int fd, uint64_t offset, void *dst, size_t len)
-{
-    ffd_t *e = fd_at(p, fd);
-    if (!e) {
-        return -1;
-    }
-    return fd_read_at(p, e, offset, dst, len);
-}
-
 static int fd_write(fproc_t *p, int fd, const void *src, size_t len)
 {
     ffd_t *e = fd_at(p, fd);
@@ -1222,14 +1278,56 @@ static int fd_write(fproc_t *p, int fd, const void *src, size_t len)
     return -1;
 }
 
-static int proc_copy_in(faddr_space_t *as, void *dst, uint64_t uva, size_t len)
+static uint64_t proc_user_page(fproc_t *p, uint64_t page, int write)
 {
-    if (!finte_as_user_ok(as, uva, len, 0)) {
+    if (!p || !p->space) {
+        return 0;
+    }
+    uint64_t pa = finte_as_translate(p->space, page, write);
+    if (pa) {
+        return pa;
+    }
+    if (finte_proc_page_fault(p, page, write) == 0) {
+        pa = finte_as_translate(p->space, page, write);
+    }
+    if (pa) {
+        return pa;
+    }
+    if (write) {
+        uint64_t rpa = finte_as_translate(p->space, page, 0);
+        if (rpa && (finte_cow_prot(rpa) & FPROC_PROT_WRITE) &&
+            finte_as_cow_fault(p->space, page, 1) == 0) {
+            return finte_as_translate(p->space, page, 1);
+        }
+    }
+    return 0;
+}
+
+static int proc_user_range(fproc_t *p, uint64_t uva, size_t len, int write)
+{
+    if (!p || !p->space || len == 0) {
+        return p && p->space ? 0 : -1;
+    }
+    if (uva + len < uva || uva < FPROC_USER_BASE ||
+        uva + len > FPROC_USER_LIMIT) {
+        return -1;
+    }
+    for (uint64_t page = uva & ~0xFFFull; page < uva + len; page += 4096u) {
+        if (!proc_user_page(p, page, write)) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int proc_copy_in(fproc_t *p, void *dst, uint64_t uva, size_t len)
+{
+    if (proc_user_range(p, uva, len, 0) != 0) {
         return -1;
     }
     while (len) {
         uint64_t page = uva & ~0xFFFull;
-        uint64_t pa = finte_as_translate(as, page, 0);
+        uint64_t pa = proc_user_page(p, page, 0);
         size_t off = (size_t)(uva - page);
         size_t chunk = 4096u - off;
         if (chunk > len) {
@@ -1243,23 +1341,17 @@ static int proc_copy_in(faddr_space_t *as, void *dst, uint64_t uva, size_t len)
     return 0;
 }
 
-static int proc_copy_out(faddr_space_t *as, uint64_t uva, const void *src,
+static int proc_copy_out(fproc_t *p, uint64_t uva, const void *src,
                          size_t len)
 {
-    if (!finte_as_user_ok(as, uva, len, 1)) {
+    if (proc_user_range(p, uva, len, 1) != 0) {
         return -1;
     }
     while (len) {
         uint64_t page = uva & ~0xFFFull;
-        uint64_t pa = finte_as_translate(as, page, 1);
+        uint64_t pa = proc_user_page(p, page, 1);
         if (!pa) {
-            if (finte_as_cow_fault(as, page, 1) != 0) {
-                return -1;
-            }
-            pa = finte_as_translate(as, page, 1);
-            if (!pa) {
-                return -1;
-            }
+            return -1;
         }
         size_t off = (size_t)(uva - page);
         size_t chunk = 4096u - off;
@@ -1277,13 +1369,13 @@ static int proc_copy_out(faddr_space_t *as, uint64_t uva, const void *src,
 int finte_user_copy_in(fflow_t *f, void *dst, uint64_t uva, size_t len)
 {
     fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
-    return proc_copy_in(p ? p->space : NULL, dst, uva, len);
+    return proc_copy_in(p, dst, uva, len);
 }
 
 int finte_user_copy_out(fflow_t *f, uint64_t uva, const void *src, size_t len)
 {
     fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
-    return proc_copy_out(p ? p->space : NULL, uva, src, len);
+    return proc_copy_out(p, uva, src, len);
 }
 
 static void user_process_entry(fflow_t *f)
@@ -1303,8 +1395,68 @@ static const fprogram_t g_user_program = {
     "user-process", user_process_entry, 1u << 20
 };
 
+static fmap_t *proc_find_map(fproc_t *p, uint64_t va, uint32_t *page_index)
+{
+    if (!p) {
+        return NULL;
+    }
+    for (int i = 0; i < FPROC_MAX_MAPS; i++) {
+        fmap_t *m = &p->maps[i];
+        if (!m->used || va < m->va || va >= m->va + m->len) {
+            continue;
+        }
+        if (page_index) {
+            *page_index = (uint32_t)((va - m->va) / 4096u);
+        }
+        return m;
+    }
+    return NULL;
+}
+
+static void proc_maps_release(fproc_t *p)
+{
+    if (!p) {
+        return;
+    }
+    for (int i = 0; i < FPROC_MAX_MAPS; i++) {
+        fmap_t *m = &p->maps[i];
+        if (!m->used) {
+            continue;
+        }
+        for (uint32_t j = 0; j < m->page_count; j++) {
+            if (m->swapped[j]) {
+                swap_slot_put((int)m->swapped[j] - 1);
+            }
+        }
+        if (m->kind == FPROC_MAP_FILE && finte_handle_valid(m->file)) {
+            (void)finte_file_handle_close(m->file);
+        }
+        finte_memset(m, 0, sizeof(*m));
+    }
+}
+
+static void proc_maps_clone(fproc_t *child, const fproc_t *parent)
+{
+    finte_memcpy(child->maps, parent->maps, sizeof(child->maps));
+    for (int i = 0; i < FPROC_MAX_MAPS; i++) {
+        fmap_t *m = &child->maps[i];
+        if (!m->used) {
+            continue;
+        }
+        if (m->kind == FPROC_MAP_FILE && finte_handle_valid(m->file)) {
+            finte_node_ref(m->file);
+        }
+        for (uint32_t j = 0; j < m->page_count; j++) {
+            if (m->swapped[j]) {
+                swap_slot_ref((int)m->swapped[j] - 1);
+            }
+        }
+    }
+}
+
 static void proc_init_maps(fproc_t *p)
 {
+    proc_maps_release(p);
     finte_memset(p->maps, 0, sizeof(p->maps));
     p->mmap_next = FPROC_MMAP_BASE;
 }
@@ -1468,6 +1620,7 @@ void finte_proc_destroy(fproc_t *p)
         }
         finte_proc_destroy(child);
     }
+    proc_maps_release(p);
     proc_fds_release(p);
     proc_table_remove(p);
     finte_service_owner_exit(p->pid);
@@ -1613,7 +1766,7 @@ static int fd_read_syscall(fproc_t *p, uint64_t fd, uint64_t uva, uint64_t len)
         if (n == 0) {
             break;
         }
-        if (proc_copy_out(p->space, uva + total, bounce, (size_t)n) != 0) {
+        if (proc_copy_out(p, uva + total, bounce, (size_t)n) != 0) {
             return -1;
         }
         total += (size_t)n;
@@ -1636,7 +1789,7 @@ static int fd_write_syscall(fproc_t *p, uint64_t fd, uint64_t uva, uint64_t len)
         if (chunk > sizeof(bounce)) {
             chunk = sizeof(bounce);
         }
-        if (proc_copy_in(p->space, bounce, uva + total, chunk) != 0) {
+        if (proc_copy_in(p, bounce, uva + total, chunk) != 0) {
             return -1;
         }
         int n = fd_write(p, (int)fd, bounce, chunk);
@@ -1661,7 +1814,6 @@ static uint64_t sys_mmap(fproc_t *p, uint64_t addr, uint64_t len, uint64_t prot)
         return (uint64_t)-1;
     }
     uint32_t pages = (uint32_t)pages64;
-    uint64_t va;
     int slot = -1;
     for (int i = 0; i < FPROC_MAX_MAPS; i++) {
         if (!p->maps[i].used) {
@@ -1672,45 +1824,20 @@ static uint64_t sys_mmap(fproc_t *p, uint64_t addr, uint64_t len, uint64_t prot)
     if (slot < 0) {
         return (uint64_t)-1;
     }
-    if (addr) {
-        va = addr & ~0xFFFull;
-    } else {
-        va = (p->mmap_next + 0xFFFu) & ~0xFFFull;
-    }
-    uint64_t end = va + pages * 4096u;
+    uint64_t va = addr ? (addr & ~0xFFFull)
+                       : ((p->mmap_next + 0xFFFu) & ~0xFFFull);
+    uint64_t end = va + (uint64_t)pages * 4096u;
     if (end < va || va < FPROC_MMAP_BASE || end > FPROC_MMAP_LIMIT) {
         return (uint64_t)-1;
     }
-    for (uint32_t i = 0; i < pages; i++) {
-        void *page = finte_as_alloc_page(p->space);
-        if (!page) {
-            for (uint32_t j = 0; j < i; j++) {
-                uint64_t pa = 0;
-                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
-                    pa) {
-                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
-                }
-            }
-            return (uint64_t)-1;
-        }
-        if (finte_as_map(p->space, va + i * 4096u,
-                         (uint64_t)(uintptr_t)page, (uint32_t)prot) != 0) {
-            finte_as_free_page(p->space, page);
-            for (uint32_t j = 0; j < i; j++) {
-                uint64_t pa = 0;
-                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
-                    pa) {
-                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
-                }
-            }
-            return (uint64_t)-1;
-        }
-    }
-    p->maps[slot].used = 1;
-    p->maps[slot].va = va;
-    p->maps[slot].len = pages * 4096u;
-    p->maps[slot].prot = (uint8_t)prot;
-    p->maps[slot].page_count = (uint16_t)pages;
+    fmap_t *m = &p->maps[slot];
+    finte_memset(m, 0, sizeof(*m));
+    m->used = 1;
+    m->kind = FPROC_MAP_ANON;
+    m->prot = (uint8_t)prot;
+    m->va = va;
+    m->len = (uint64_t)pages * 4096u;
+    m->page_count = (uint16_t)pages;
     if (!addr) {
         p->mmap_next = end;
     }
@@ -1753,48 +1880,22 @@ static uint64_t sys_mmap_file(fproc_t *p, uint64_t fd, uint64_t len,
     if (end < va || va < FPROC_MMAP_BASE || end > FPROC_MMAP_LIMIT) {
         return (uint64_t)-1;
     }
-    for (uint32_t i = 0; i < pages; i++) {
-        void *page = finte_as_alloc_page(p->space);
-        if (!page) {
-            for (uint32_t j = 0; j < i; j++) {
-                uint64_t pa = 0;
-                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
-                    pa) {
-                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
-                }
-            }
-            return (uint64_t)-1;
-        }
-        int n = fd_pread(p, (int)fd, (uint64_t)i * 4096u, page, 4096);
-        if (n < 0) {
-            finte_as_free_page(p->space, page);
-            for (uint32_t j = 0; j < i; j++) {
-                uint64_t pa = 0;
-                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
-                    pa) {
-                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
-                }
-            }
-            return (uint64_t)-1;
-        }
-        if (finte_as_map(p->space, va + i * 4096u,
-                         (uint64_t)(uintptr_t)page, (uint32_t)prot) != 0) {
-            finte_as_free_page(p->space, page);
-            for (uint32_t j = 0; j < i; j++) {
-                uint64_t pa = 0;
-                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
-                    pa) {
-                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
-                }
-            }
-            return (uint64_t)-1;
-        }
+    fmap_t *m = &p->maps[slot];
+    finte_memset(m, 0, sizeof(*m));
+    m->used = 1;
+    m->prot = (uint8_t)prot;
+    m->va = va;
+    m->len = (uint64_t)pages * 4096u;
+    m->page_count = (uint16_t)pages;
+    m->file_size = e->ofd->size;
+    if (e->ofd->kind == FPROC_FD_INITRD) {
+        m->kind = FPROC_MAP_INITRD;
+        m->data = e->ofd->data;
+    } else {
+        m->kind = FPROC_MAP_FILE;
+        m->file = e->ofd->handle;
+        finte_node_ref(m->file);
     }
-    p->maps[slot].used = 1;
-    p->maps[slot].va = va;
-    p->maps[slot].len = (uint64_t)pages * 4096u;
-    p->maps[slot].prot = (uint8_t)prot;
-    p->maps[slot].page_count = (uint16_t)pages;
     p->mmap_next = end;
     return va;
 }
@@ -1805,26 +1906,209 @@ static int sys_munmap(fproc_t *p, uint64_t va, uint64_t len)
         return -1;
     }
     for (int i = 0; i < FPROC_MAX_MAPS; i++) {
-        if (!p->maps[i].used) {
+        fmap_t *m = &p->maps[i];
+        if (!m->used) {
             continue;
         }
-        if (va < p->maps[i].va || va + len > p->maps[i].va + p->maps[i].len) {
+        if (va != m->va) {
             continue;
         }
-        for (uint32_t j = 0; j < p->maps[i].page_count; j++) {
-            uint64_t page_va = p->maps[i].va + j * 4096u;
-            if (page_va < va || page_va >= va + len) {
-                continue;
-            }
+        uint64_t rounded = (len + 0xFFFu) & ~0xFFFull;
+        if (rounded < len || rounded != m->len) {
+            continue;
+        }
+        for (uint32_t j = 0; j < m->page_count; j++) {
+            uint64_t page_va = m->va + j * 4096u;
             uint64_t pa = 0;
             if (finte_as_unmap(p->space, page_va, &pa) == 0 && pa) {
                 finte_as_free_page(p->space, (void *)(uintptr_t)pa);
             }
+            if (m->swapped[j]) {
+                swap_slot_put((int)m->swapped[j] - 1);
+            }
         }
-        p->maps[i].used = 0;
+        if (m->kind == FPROC_MAP_FILE && finte_handle_valid(m->file)) {
+            (void)finte_file_handle_close(m->file);
+        }
+        finte_memset(m, 0, sizeof(*m));
         return 0;
     }
     return -1;
+}
+
+int finte_proc_page_fault(fproc_t *p, uint64_t va, int write)
+{
+    if (!p || !p->space) {
+        return -1;
+    }
+    uint64_t page = va & ~0xFFFull;
+    uint32_t idx = 0;
+    fmap_t *m = proc_find_map(p, page, &idx);
+    if (!m || idx >= m->page_count) {
+        return -1;
+    }
+    if (write && !(m->prot & FPROC_PROT_WRITE)) {
+        return -1;
+    }
+    if (finte_as_translate(p->space, page, 0)) {
+        return -1; /* present: the COW path owns write upgrades */
+    }
+    void *fresh = finte_as_alloc_page(p->space);
+    if (!fresh) {
+        return -1;
+    }
+    if (m->swapped[idx]) {
+        int slot = (int)m->swapped[idx] - 1;
+        if (!swap_active() || swap_io(slot, fresh, 0) != 0) {
+            finte_as_free_page(p->space, fresh);
+            return -1;
+        }
+        if (finte_as_map(p->space, page, (uint64_t)(uintptr_t)fresh,
+                         m->prot) != 0) {
+            finte_as_free_page(p->space, fresh);
+            return -1;
+        }
+        swap_slot_put(slot);
+        m->swapped[idx] = 0;
+        finte_as_flush(p->space);
+        return 0;
+    }
+    finte_memset(fresh, 0, 4096);
+    if (m->kind == FPROC_MAP_FILE || m->kind == FPROC_MAP_INITRD) {
+        uint64_t off = (uint64_t)idx * 4096u;
+        if (off < m->file_size) {
+            uint64_t want = m->file_size - off;
+            if (want > 4096u) {
+                want = 4096u;
+            }
+            if (m->kind == FPROC_MAP_FILE) {
+                if (finte_file_handle_read_at(m->file, off, fresh,
+                                              (size_t)want) < 0) {
+                    finte_as_free_page(p->space, fresh);
+                    return -1;
+                }
+            } else if (m->data) {
+                finte_memcpy(fresh, m->data + off, (size_t)want);
+            }
+        }
+    }
+    if (finte_as_map(p->space, page, (uint64_t)(uintptr_t)fresh, m->prot) !=
+        0) {
+        finte_as_free_page(p->space, fresh);
+        return -1;
+    }
+    finte_as_flush(p->space);
+    return 0;
+}
+
+static int sys_mincore(fproc_t *p, uint64_t addr, uint64_t len,
+                       uint64_t vec_uva)
+{
+    if (!p || !p->space || len == 0 || vec_uva == 0) {
+        return -1;
+    }
+    uint64_t start = addr & ~0xFFFull;
+    uint64_t end = (addr + len + 0xFFFu) & ~0xFFFull;
+    if (end < start) {
+        return -1;
+    }
+    uint64_t pages = (end - start) / 4096u;
+    if (pages == 0 || pages > FPROC_MAX_MAP_PAGES) {
+        return -1;
+    }
+    uint8_t vec[FPROC_MAX_MAP_PAGES];
+    for (uint64_t i = 0; i < pages; i++) {
+        vec[i] = finte_as_translate(p->space, start + i * 4096u, 0) ? 1 : 0;
+    }
+    return proc_copy_out(p, vec_uva, vec, (size_t)pages);
+}
+
+static int sys_madvise(fproc_t *p, uint64_t addr, uint64_t len, uint64_t advice){
+    if (!p || !p->space || advice != FPROC_MADV_PAGEOUT || len == 0) {
+        return -1;
+    }
+    if (!swap_active()) {
+        return -1;
+    }
+    uint64_t start = addr & ~0xFFFull;
+    uint64_t end = (addr + len + 0xFFFu) & ~0xFFFull;
+    if (end < start) {
+        return -1;
+    }
+    for (uint64_t page = start; page < end; page += 4096u) {
+        uint32_t idx = 0;
+        fmap_t *m = proc_find_map(p, page, &idx);
+        if (!m || idx >= m->page_count) {
+            return -1;
+        }
+        if (m->swapped[idx]) {
+            continue;
+        }
+        uint64_t pa = finte_as_translate(p->space, page, 0);
+        if (!pa) {
+            continue;
+        }
+        int slot = swap_slot_alloc();
+        if (slot < 0) {
+            return -1;
+        }
+        if (swap_io(slot, (void *)(uintptr_t)pa, 1) != 0) {
+            swap_slot_put(slot);
+            return -1;
+        }
+        uint64_t un = 0;
+        if (finte_as_unmap(p->space, page, &un) == 0 && un) {
+            finte_as_free_page(p->space, (void *)(uintptr_t)un);
+        }
+        m->swapped[idx] = (uint64_t)slot + 1;
+    }
+    finte_as_flush(p->space);
+    return 0;
+}
+
+static int sys_swapon(fproc_t *p, uint64_t path_uva, uint64_t len)
+{
+    if (!p || !p->space || len == 0 || len >= sizeof(g_swap_path)) {
+        return -1;
+    }
+    char path[FDISK_PATH_MAX];
+    if (proc_copy_in(p, path, path_uva, (size_t)len) != 0) {
+        return -1;
+    }
+    path[len] = 0;
+    if (swap_active()) {
+        return -1;
+    }
+    uint64_t sectors = 0;
+    uint32_t ssize = 0;
+    if (finte_disk_block_info(path, &sectors, &ssize) != 0 ||
+        ssize == 0 || (4096u % ssize) != 0 ||
+        sectors * (uint64_t)ssize < FPROC_SWAP_BYTES) {
+        return -1;
+    }
+    uint64_t flags = proc_lock();
+    finte_memset(g_swap_refs, 0, sizeof(g_swap_refs));
+    finte_strlcpy(g_swap_path, path, sizeof(g_swap_path));
+    g_swap_sectors_per_page = 4096u / ssize;
+    g_swap_dev = 1;
+    proc_unlock(flags);
+    return 0;
+}
+
+static int sys_swapoff(fproc_t *p)
+{
+    (void)p;
+    uint64_t flags = proc_lock();
+    for (int i = 0; i < FPROC_SWAP_SLOTS; i++) {
+        if (g_swap_refs[i] != 0) {
+            proc_unlock(flags);
+            return -1;
+        }
+    }
+    g_swap_path[0] = 0;
+    g_swap_dev = -1;
+    proc_unlock(flags);
+    return 0;
 }
 
 static void proc_deliver_signal(fproc_t *target, uint64_t sig)
@@ -1986,7 +2270,7 @@ static int sys_getitimer(fproc_t *p, uint64_t which, uint64_t old_uva)
     }
     proc_itimerval_t old;
     proc_timer_snapshot(p, which, &old);
-    return proc_copy_out(p->space, old_uva, &old, sizeof(old));
+    return proc_copy_out(p, old_uva, &old, sizeof(old));
 }
 
 static int sys_setitimer(fproc_t *p, uint64_t which, uint64_t new_uva,
@@ -1999,7 +2283,7 @@ static int sys_setitimer(fproc_t *p, uint64_t which, uint64_t new_uva,
     uint64_t value = 0;
     uint64_t interval = 0;
     if (new_uva != 0) {
-        if (proc_copy_in(p->space, &nv, new_uva, sizeof(nv)) != 0 ||
+        if (proc_copy_in(p, &nv, new_uva, sizeof(nv)) != 0 ||
             proc_timeval_ns(&nv.value, &value) != 0 ||
             proc_timeval_ns(&nv.interval, &interval) != 0) {
             return -1;
@@ -2008,7 +2292,7 @@ static int sys_setitimer(fproc_t *p, uint64_t which, uint64_t new_uva,
     if (old_uva != 0) {
         proc_itimerval_t old;
         proc_timer_snapshot(p, which, &old);
-        if (proc_copy_out(p->space, old_uva, &old, sizeof(old)) != 0) {
+        if (proc_copy_out(p, old_uva, &old, sizeof(old)) != 0) {
             return -1;
         }
     }
@@ -2186,7 +2470,7 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
             return (uint64_t)-1;
         }
         char name[FINTE_NAME_MAX];
-        if (proc_copy_in(p->space, name, a0, (size_t)a1) != 0) {
+        if (proc_copy_in(p, name, a0, (size_t)a1) != 0) {
             return (uint64_t)-1;
         }
         name[a1] = 0;
@@ -2202,7 +2486,7 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
             return (uint64_t)-1;
         }
         char name[FINTE_NAME_MAX];
-        if (proc_copy_in(p->space, name, a0, (size_t)a1) != 0) {
+        if (proc_copy_in(p, name, a0, (size_t)a1) != 0) {
             return (uint64_t)-1;
         }
         name[a1] = 0;
@@ -2294,6 +2578,18 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
     }
     if (nr == FPROC_SYS_MUNMAP) {
         return (uint64_t)sys_munmap(p, a0, a1);
+    }
+    if (nr == FPROC_SYS_MADVISE) {
+        return (uint64_t)sys_madvise(p, a0, a1, a2);
+    }
+    if (nr == FPROC_SYS_MINCORE) {
+        return (uint64_t)sys_mincore(p, a0, a1, a2);
+    }
+    if (nr == FPROC_SYS_SWAPON) {
+        return (uint64_t)sys_swapon(p, a0, a1);
+    }
+    if (nr == FPROC_SYS_SWAPOFF) {
+        return (uint64_t)sys_swapoff(p);
     }
     if (nr == FPROC_SYS_FORK) {
         extern uint64_t finte_proc_fork(fproc_t *parent, void *frame);
@@ -2516,7 +2812,7 @@ uint64_t finte_proc_fork(fproc_t *parent, void *frame)
     child->mmap_next = parent->mmap_next;
     child->fork_child = 1;
     finte_format(child->name, sizeof(child->name), "%s-child", parent->name);
-    finte_memcpy(child->maps, parent->maps, sizeof(child->maps));
+    proc_maps_clone(child, parent);
     finte_memcpy(child->sigs, parent->sigs, sizeof(child->sigs));
     child->space = finte_as_clone(parent->space);
     if (!child->space) {
@@ -2680,7 +2976,7 @@ int finte_proc_waitpid(fproc_t *p, int32_t pid, uint64_t status_uva,
         status = 0xFFFF;
     }
     if (status_uva != 0 &&
-        proc_copy_out(p->space, status_uva, &status, sizeof(status)) != 0) {
+        proc_copy_out(p, status_uva, &status, sizeof(status)) != 0) {
         return -1;
     }
     if (event == FPROC_WAIT_STOP) {
@@ -2728,7 +3024,7 @@ uint64_t finte_proc_exec(fproc_t *p, uint64_t path_uva, uint64_t path_len,
         return (uint64_t)-1;
     }
     char path[FDISK_PATH_MAX];
-    if (proc_copy_in(p->space, path, path_uva, (size_t)path_len) != 0) {
+    if (proc_copy_in(p, path, path_uva, (size_t)path_len) != 0) {
         return (uint64_t)-1;
     }
     path[path_len] = 0;
@@ -3171,6 +3467,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage cputime done\n", 26);
     int fdtab_rc = finte_usermode_run("fdtab.elf");
     hal_console_write("[abi] stage fdtab done\n", 24);
+    int vm_rc = finte_usermode_run("vm.elf");
+    hal_console_write("[abi] stage vm done\n", 21);
     int cap_rc = proc_cap_test();
     hal_console_write("[abi] stage cap done\n", 22);
     int svc_rc = proc_service_test();
@@ -3206,8 +3504,9 @@ int finte_proc_abi_test(void)
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
                          "filemap=%s exec=%s signal=%s sigset=%s job=%s "
-                         "pgroup=%s alarm=%s cputime=%s fdtab=%s cap=%s "
-                         "service=%s bad=%s dyn=%s churn=%s blocked=%s\n",
+                         "pgroup=%s alarm=%s cputime=%s fdtab=%s vm=%s "
+                         "cap=%s service=%s bad=%s dyn=%s churn=%s "
+                         "blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
                          ok_str(cow_rc == 0), ok_str(filemap_rc == 0),
@@ -3215,8 +3514,8 @@ int finte_proc_abi_test(void)
                          ok_str(sig_rc == 0), ok_str(sigset_rc == 0),
                          ok_str(job_rc == 0), ok_str(pgroup_rc == 0),
                          ok_str(alarm_rc == 0), ok_str(cputime_rc == 0),
-                         ok_str(fdtab_rc == 0), ok_str(cap_rc == 0),
-                         ok_str(svc_rc == 0),
+                         ok_str(fdtab_rc == 0), ok_str(vm_rc == 0),
+                         ok_str(cap_rc == 0), ok_str(svc_rc == 0),
                          ok_str(bad_rc == 0), ok_str(dyn_rc == 0),
                          ok_str(churn_rc == 0), ok_str(blocked_ok));
     if (n > 0) {
@@ -3227,7 +3526,7 @@ int finte_proc_abi_test(void)
             cow_rc == 0 && filemap_rc == 0 && exec_rc == 0 &&
             sig_rc == 0 && sigset_rc == 0 && job_rc == 0 &&
             pgroup_rc == 0 && alarm_rc == 0 && cputime_rc == 0 &&
-            fdtab_rc == 0 && cap_rc == 0 && svc_rc == 0 &&
+            fdtab_rc == 0 && vm_rc == 0 && cap_rc == 0 && svc_rc == 0 &&
             bad_rc == 0 && dyn_rc == 0 && churn_rc == 0 &&
             blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

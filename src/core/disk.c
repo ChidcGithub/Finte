@@ -872,6 +872,68 @@ int finte_disk_create(const char *path, int is_dir)
     return fs->ops->create(fs->ctx, rel, is_dir);
 }
 
+static fdisk_dev_t *find_block(const char *name)
+{
+    if (!name) {
+        return NULL;
+    }
+    for (int i = 0; i < g_disk_count; i++) {
+        if (g_disks[i].present &&
+            finte_strcmp(g_disks[i].name, name) == 0) {
+            return &g_disks[i];
+        }
+    }
+    return NULL;
+}
+
+int finte_disk_block_info(const char *name, uint64_t *sectors,
+                          uint32_t *sector_size)
+{
+    fdisk_dev_t *dev = find_block(name);
+    if (!dev) {
+        return FINTE_ERR_NOENT;
+    }
+    if (sectors) {
+        *sectors = dev->sectors;
+    }
+    if (sector_size) {
+        *sector_size = dev->sector_size;
+    }
+    return 0;
+}
+
+int finte_disk_block_read(const char *name, uint64_t lba, void *buf,
+                          uint32_t sectors)
+{
+    fdisk_dev_t *dev = find_block(name);
+    if (!dev) {
+        return FINTE_ERR_NOENT;
+    }
+    if (sectors == 0 || lba >= dev->sectors ||
+        sectors > dev->sectors - lba) {
+        return FINTE_ERR_RANGE;
+    }
+    return hal_blk_read(dev->hal_index, lba, buf, sectors) == 0
+               ? 0
+               : FINTE_ERR_IO;
+}
+
+int finte_disk_block_write(const char *name, uint64_t lba, const void *buf,
+                           uint32_t sectors)
+{
+    fdisk_dev_t *dev = find_block(name);
+    if (!dev) {
+        return FINTE_ERR_NOENT;
+    }
+    if (sectors == 0 || lba >= dev->sectors ||
+        sectors > dev->sectors - lba) {
+        return FINTE_ERR_RANGE;
+    }
+    return hal_blk_write(dev->hal_index, lba, buf, sectors) == 0
+               ? 0
+               : FINTE_ERR_IO;
+}
+
 int finte_disk_unlink(const char *path)
 {
     if (!path || path[0] != '/') {

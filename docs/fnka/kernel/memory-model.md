@@ -2,8 +2,8 @@
 
 > **Status:** Partial — a shared physical page manager consumes Boot Protocol
 > v1, and both x86_64 and arm64 have Flow-owned private user page tables at
-> 4–5 GiB with anonymous and file-backed private `mmap`, copy-on-write fork and
-> arm64 ASIDs. There is no demand paging or swap.
+> 4–5 GiB with demand-paged anonymous and file-backed private `mmap`,
+> copy-on-write fork, raw-block swap and arm64 ASIDs.
 >
 > **Normative for:** physical memory, virtual address spaces, kernel/user
 > layout, allocation and mapping ownership.
@@ -68,8 +68,11 @@ Each user process gets a private PML4:
 
 User page-table entries are present, user-accessible and carry RW/NX per
 mapping: code is RX, data/stack/mmap pages are RW-NX, and `EFER.NXE` is enabled
-per CPU. Fork shares owned pages read-only and copies on the first write; there
-is no demand paging or guard-page enforcement beyond the address-range checks.
+per CPU. Fork shares owned pages read-only and copies on the first write.
+`mmap` reserves address space lazily; faults fill anonymous pages with zero and
+file-backed pages from their source, and `MADV_PAGEOUT` writes resident pages
+to a raw swap device. Guard pages are not enforced beyond the address-range
+checks.
 
 ## 3. arm64 virtual layout
 
@@ -188,8 +191,10 @@ The target contract requires:
 - User mappings are RX/RW-NX and write-protected code. Fork shares owned pages
   read-only; a write fault makes a private copy (or upgrades the last owner in
   place), with the COW registry holding one reference per mapping space.
-- Anonymous `mmap`/`munmap` are capped at 64 pages per mapping; no file-backed
-  mmap or demand paging.
+- Anonymous and file-backed private `mmap` are demand-paged and capped at 64
+  pages per mapping. `mincore` reports residency; `MADV_PAGEOUT` evicts to a
+  raw block swap device and faults restore the page. There is no automatic
+  reclaim under PMM pressure yet.
 - No IOMMU or DMA address-space isolation.
 - The x86 user low identity map covers 4 GiB supervisor, not a minimal kernel
   window.

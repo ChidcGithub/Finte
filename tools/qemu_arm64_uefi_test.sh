@@ -18,6 +18,10 @@ timeout 60 qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -smp 4 \
     -nographic -monitor none -no-reboot \
     -drive if=pflash,format=raw,unit=0,file="$CODE",readonly=on \
     -drive if=pflash,format=raw,unit=1,file=build/AAVMF_VARS_TEST.fd \
+    -drive if=none,id=hd0,format=raw,file=build/disk-test.img \
+    -device virtio-blk-device,drive=hd0 \
+    -drive if=none,id=hd1,format=raw,file=build/swap.img \
+    -device virtio-blk-device,drive=hd1 \
     -cdrom build/finte-arm64.iso > "$LOG" 2>&1 || true
 
 ok=1
@@ -49,7 +53,7 @@ if ! grep -Fq 'procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fau
     echo "missing: full procs demo"
     ok=0
 fi
-if ! grep -Fq 'abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK cputime=OK fdtab=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK' "$LOG"; then
+if ! grep -Fq 'abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK cputime=OK fdtab=OK vm=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK' "$LOG"; then
     echo "missing: full process ABI suite"
     ok=0
 fi

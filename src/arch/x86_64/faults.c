@@ -86,6 +86,10 @@ void kx_fault_ex(uint64_t vec, uint64_t err, uint64_t rip, uint64_t cs)
     if ((cs & 3u) == 3u) {
         fflow_t *f = finte_flow_current();
         fproc_t *p = (f && f->user) ? (fproc_t *)f->user : NULL;
+        if (p && p->space && vec == 14u &&
+            finte_proc_page_fault(p, cr2, (err & 2u) != 0) == 0) {
+            return; /* demand page is now present */
+        }
         if (p && p->space && vec == 14u && (err & 3u) == 3u &&
             finte_as_cow_fault(p->space, cr2, 1) == 0) {
             return; /* instruction retries after the TLB flush */

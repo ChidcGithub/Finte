@@ -45,7 +45,7 @@ ARM64_USER_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -ffreestanding \
                      -fno-unwind-tables -fno-asynchronous-unwind-tables \
                      -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
                      -Wall -Wextra
-USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn wait cow filemap sigset job pgroup alarm cputimer fdtab fdchild exit block
+USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn wait cow filemap sigset job pgroup alarm cputimer fdtab vm fdchild exit block
 USER_ELF := $(addprefix $(BUILD)/,$(addsuffix .elf,$(USER_PROGS)))
 ARM64_USER_ELF := $(addprefix $(BUILD)/arm64/,$(addsuffix .elf,$(USER_PROGS)))
 
@@ -130,10 +130,14 @@ $(BUILD)/arm64/obj/src/arch/arm64/initrd_blob.o: $(BUILD)/arm64/initrd_blob.c
 $(BUILD)/finte-arm64.elf: $(ARM64_OBJ) src/arch/arm64/kernel.ld
 	$(ARM64_LD) -T src/arch/arm64/kernel.ld -o $@ $(ARM64_OBJ)
 
-arm64-test: arm64
+arm64-test: arm64 $(BUILD)/disk-test.img $(BUILD)/swap.img
 	@rm -f $(BUILD)/arm64.log
 	timeout 40 $(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 4 \
 	  -nographic -monitor none -no-reboot \
+	  -drive if=none,id=hd0,format=raw,file=$(BUILD)/disk-test.img \
+	  -device virtio-blk-device,drive=hd0 \
+	  -drive if=none,id=hd1,format=raw,file=$(BUILD)/swap.img \
+	  -device virtio-blk-device,drive=hd1 \
 	  -kernel $(BUILD)/finte-arm64.elf > $(BUILD)/arm64.log 2>&1 || true
 	@if grep -q "arm64 self-check: PASS" $(BUILD)/arm64.log && \
 	    grep -Eq "mmu: (39|48)-bit identity map enabled" $(BUILD)/arm64.log && \
@@ -144,25 +148,25 @@ arm64-test: arm64
 	    grep -q "arm64 user: init.elf PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 procs: PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 abi: PASS" $(BUILD)/arm64.log && \
-	    grep -Fq "abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK cputime=OK fdtab=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
+	    grep -Fq "abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK alarm=OK cputime=OK fdtab=OK vm=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
 	    grep -Fq "procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK" $(BUILD)/arm64.log; then \
 	  echo "arm64 boot test: OK"; \
 	else \
 	  echo "arm64 boot test: FAILED"; tail -80 $(BUILD)/arm64.log; exit 1; \
 	fi
 
-arm64-uefi-test: $(BUILD)/finte-arm64.iso
+arm64-uefi-test: $(BUILD)/finte-arm64.iso $(BUILD)/disk-test.img $(BUILD)/swap.img
 	AAVMF_CODE=$(AAVMF_CODE) AAVMF_VARS=$(AAVMF_VARS) \
 	  bash tools/qemu_arm64_uefi_test.sh
 
-abi-test: $(BUILD)/finte-bios.img $(BUILD)/disk-test.img
+abi-test: $(BUILD)/finte-bios.img $(BUILD)/disk-test.img $(BUILD)/swap.img
 	bash tools/qemu_abi_test.sh
 
-arm64-disk-test: arm64 $(BUILD)/disk-test.img
+arm64-disk-test: arm64 $(BUILD)/disk-test.img $(BUILD)/swap.img
 	QEMU_ARM64=$(QEMU_ARM64) \
 	  bash tools/qemu_arm64_disk_test.sh direct
 
-arm64-uefi-disk-test: $(BUILD)/finte-arm64.iso $(BUILD)/disk-test.img
+arm64-uefi-disk-test: $(BUILD)/finte-arm64.iso $(BUILD)/disk-test.img $(BUILD)/swap.img
 	QEMU_ARM64=$(QEMU_ARM64) AAVMF_CODE=$(AAVMF_CODE) AAVMF_VARS=$(AAVMF_VARS) \
 	  bash tools/qemu_arm64_disk_test.sh uefi
 
@@ -374,6 +378,10 @@ qemu-test: image
 
 $(BUILD)/disk-test.img: tools/mkdisk_test.py tools/mklfc1.py
 	$(PYTHON) tools/mkdisk_test.py --out $@
+
+$(BUILD)/swap.img:
+	@mkdir -p $(BUILD)
+	$(PYTHON) -c "f=open(r'$@','wb'); f.truncate(4*1024*1024); f.close()"
 
 disk-image: $(BUILD)/disk-test.img
 

@@ -589,7 +589,8 @@ The native user ABI is `int 0x80` with `rax` as the call number:
 private-data isolation, a 50 ms sleep, two CPU-bound tasks with a heartbeat, and
 a deliberate read of supervisor memory that kills only the offending process.
 
-Still missing: demand paging and swap.
+Still missing: guard-page enforcement and automatic reclaim under PMM
+pressure.
 
 ## 13. HAL and portability
 
@@ -627,7 +628,7 @@ firmware-call window. Platform-specific boot data and UEFI hooks live in
 
 The trade-offs are equally explicit: preemptive but coarse-grained SMP (a
 global core lock), static flow affinity, one shared user address space, static
-table limits, no demand paging, append-only lfc1, and a small Linux subset.
+table limits, append-only lfc1, and a small Linux subset.
 These are the boundaries of v0.0.2, not accidents.
 
 ## 15. Comparison with Linux

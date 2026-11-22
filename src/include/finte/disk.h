@@ -86,6 +86,12 @@ int finte_disk_rename(const char *from, const char *to);
 int finte_disk_truncate(const char *path, uint64_t size);
 int finte_disk_sync(void);
 int finte_disk_info(const char *path, fdfs_info_t *out);
+int finte_disk_block_info(const char *name, uint64_t *sectors,
+                          uint32_t *sector_size);
+int finte_disk_block_read(const char *name, uint64_t lba, void *buf,
+                          uint32_t sectors);
+int finte_disk_block_write(const char *name, uint64_t lba, const void *buf,
+                           uint32_t sectors);
 const char *finte_disk_error(int err);
 
 #endif /* FINTE_DISK_H */
