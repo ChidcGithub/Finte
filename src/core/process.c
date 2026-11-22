@@ -1166,6 +1166,7 @@ void finte_proc_destroy(fproc_t *p)
     if (!p) {
         return;
     }
+    p->parent = NULL;
     if (p->flow && p->flow->started && p->flow->state != FINTE_FLOW_DEAD &&
         p->flow->state != FINTE_FLOW_FREE) {
         /* The live flow still owns this process object; abort it and leave
@@ -1177,6 +1178,7 @@ void finte_proc_destroy(fproc_t *p)
         fproc_t *child = p->children;
         p->children = child->next_sibling;
         child->next_sibling = NULL;
+        child->parent = NULL;
         if (child->flow && child->flow->state != FINTE_FLOW_DEAD &&
             child->flow->state != FINTE_FLOW_FREE) {
             finte_proc_abort(child);
@@ -1258,26 +1260,36 @@ void finte_process_signal_check(fproc_t *p, void *frame)
         return;
     }
     if (p->killed) {
+        p->killed = 0;
         finte_flow_exit(p->flow, 128 + FPROC_SIGKILL);
     }
     const fproc_arch_ops_t *ops = fproc_arch();
     if (!ops->frame_size || !ops->signal_setup) {
         return;
     }
-    for (uint32_t sig = 0; sig < FPROC_MAX_SIGNALS; sig++) {
-        if (!p->sigs[sig].pending || p->sigs[sig].blocked) {
+    for (uint32_t sig = 1; sig < FPROC_MAX_SIGNALS; sig++) {
+        if (!p->sigs[sig].pending) {
             continue;
         }
-        if (!p->sigs[sig].handler) {
+        if (p->sig_blocked & (1u << sig)) {
             continue;
         }
+        if (p->sigs[sig].handler) {
+            p->sigs[sig].pending = 0;
+            finte_memcpy(p->sig_frame, frame, ops->frame_size());
+            if (ops->signal_setup(p->space, frame, p->sigs[sig].handler,
+                                  p->sigs[sig].restorer, sig) == 0) {
+                return;
+            }
+            p->sigs[sig].pending = 1;
+            continue;
+        }
+        /* Default action: SIGCHLD is ignored, the rest terminate. */
         p->sigs[sig].pending = 0;
-        finte_memcpy(p->sig_frame, frame, ops->frame_size());
-        if (ops->signal_setup(p->space, frame, p->sigs[sig].handler,
-                              p->sigs[sig].restorer, sig) == 0) {
-            return;
+        if (sig == FPROC_SIGCHLD) {
+            continue;
         }
-        p->sigs[sig].pending = 1;
+        finte_flow_exit(p->flow, 128 + (int)sig);
     }
 }
 
@@ -1519,6 +1531,9 @@ static int sys_kill(fproc_t *p, uint64_t pid, uint64_t sig)
     if (!p || sig >= FPROC_MAX_SIGNALS) {
         return -1;
     }
+    if (sig == 0) {
+        return 0;
+    }
     fproc_t *target = finte_proc_find((uint32_t)pid);
     if (!target) {
         return -1;
@@ -1532,6 +1547,24 @@ static int sys_kill(fproc_t *p, uint64_t pid, uint64_t sig)
         finte_sched_wake_thread(target->flow->thread);
     }
     return 0;
+}
+
+static uint64_t sys_sigprocmask(fproc_t *p, uint64_t how, uint64_t mask)
+{
+    if (!p) {
+        return (uint64_t)-1;
+    }
+    uint32_t bits = (uint32_t)mask & ~(1u << FPROC_SIGKILL);
+    uint32_t old = p->sig_blocked;
+    if (how == FPROC_SIG_BLOCK) {
+        bits = old | bits;
+    } else if (how == FPROC_SIG_UNBLOCK) {
+        bits = old & ~bits;
+    } else if (how != FPROC_SIG_SETMASK) {
+        return (uint64_t)-1;
+    }
+    p->sig_blocked = bits;
+    return (uint64_t)old;
 }
 
 static int sys_signal(fproc_t *p, uint64_t sig, uint64_t handler,
@@ -1666,6 +1699,9 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
     }
     if (nr == FPROC_SYS_SIGNAL) {
         return (uint64_t)sys_signal(p, a0, a1, a2);
+    }
+    if (nr == FPROC_SYS_SIGPROCMASK) {
+        return sys_sigprocmask(p, a0, a1);
     }
     if (nr == FPROC_SYS_SIGRETURN) {
         const fproc_arch_ops_t *ops = fproc_arch();
@@ -1904,6 +1940,12 @@ uint64_t finte_proc_fork(fproc_t *parent, void *frame)
         return (uint64_t)-1;
     }
     child->flow->user = child;
+    child->parent = parent;
+    child->sig_blocked = parent->sig_blocked;
+    for (uint32_t i = 1; i < FPROC_MAX_SIGNALS; i++) {
+        child->sigs[i].handler = parent->sigs[i].handler;
+        child->sigs[i].restorer = parent->sigs[i].restorer;
+    }
     if (child->flow->thread) {
         child->flow->thread->priority = 0;
         child->flow->thread->cpu = parent->cpu;
@@ -2023,6 +2065,7 @@ uint64_t finte_proc_exec(fproc_t *p, uint64_t path_uva, uint64_t path_len,
     }
     proc_init_maps(p);
     proc_close_user_fds(p);
+    finte_memset(p->sigs, 0, sizeof(p->sigs));
     finte_as_switch(new);
     finte_as_unref(old);
     fproc_arch()->exec_frame(frame, entry, stack_top - 16u);
@@ -2419,6 +2462,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage exec done\n", 23);
     int sig_rc = proc_signal_test();
     hal_console_write("[abi] stage signal done\n", 25);
+    int sigset_rc = finte_usermode_run("sigset.elf");
+    hal_console_write("[abi] stage sigset done\n", 25);
     int cap_rc = proc_cap_test();
     hal_console_write("[abi] stage cap done\n", 22);
     int svc_rc = proc_service_test();
@@ -2453,13 +2498,14 @@ int finte_proc_abi_test(void)
     char buf[192];
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
-                         "filemap=%s exec=%s signal=%s cap=%s service=%s "
-                         "bad=%s dyn=%s churn=%s blocked=%s\n",
+                         "filemap=%s exec=%s signal=%s sigset=%s cap=%s "
+                         "service=%s bad=%s dyn=%s churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
                          ok_str(cow_rc == 0), ok_str(filemap_rc == 0),
                          ok_str(exec_rc == 0),
-                         ok_str(sig_rc == 0), ok_str(cap_rc == 0),
+                         ok_str(sig_rc == 0), ok_str(sigset_rc == 0),
+                         ok_str(cap_rc == 0),
                          ok_str(svc_rc == 0), ok_str(bad_rc == 0),
                          ok_str(dyn_rc == 0), ok_str(churn_rc == 0),
                          ok_str(blocked_ok));
@@ -2469,6 +2515,7 @@ int finte_proc_abi_test(void)
     hal_watchdog_resume();
     return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
             cow_rc == 0 && filemap_rc == 0 && exec_rc == 0 &&
-            sig_rc == 0 && cap_rc == 0 && svc_rc == 0 && bad_rc == 0 &&
-            dyn_rc == 0 && churn_rc == 0 && blocked_ok) ? 0 : FINTE_ERR_STATE;
+            sig_rc == 0 && sigset_rc == 0 && cap_rc == 0 && svc_rc == 0 &&
+            bad_rc == 0 && dyn_rc == 0 && churn_rc == 0 &&
+            blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

@@ -26,6 +26,11 @@ Short notes only. GitHub releases carry the per-commit changes.
   pages, so writes to the mapping never modify the underlying file. The new
   `filemap.elf` checks the mapped contents, a private write and an unchanged
   fd read.
+- Extended the signal layer: per-process masks via `sigprocmask`, pending
+  signals delivered on unblock, SIGUSR1/2/SIGCHLD handlers, SIGCHLD queued on
+  child exit, and default terminate actions for SIGTERM/SIGINT/SIGSEGV. The
+  new `sigset.elf` checks masks, two blocked signals, SIGCHLD and the default
+  actions.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

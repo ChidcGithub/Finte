@@ -220,7 +220,7 @@ The target contract requires:
 - `make arm64-uefi-test`: same checks plus PMM counts from the UEFI memory map.
 - `make arm64-disk-test`: virtio-mmio lfc1/ext4/NTFS reads (legacy + modern).
 - `make abi-test`: x86_64 fd table, anonymous and file-backed mmap, COW fork,
-  waitpid, exec, signal, cap transfer, churn, blocked-flow abort and
+  waitpid, exec, signal sets, cap transfer, churn, blocked-flow abort and
   RX/RW-NX PTE checks.
 - `make arm64-test`: the same shared ABI suite on 4 CPUs plus the EL0/procs
   demos and Flow-owned space release.

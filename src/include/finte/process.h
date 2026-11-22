@@ -76,8 +76,17 @@
 #define FPROC_SYS_SHM_ADDR     220
 #define FPROC_SYS_ARENA_MAP    230
 
+#define FPROC_SIGINT           2
 #define FPROC_SIGKILL          9
 #define FPROC_SIGUSR1          10
+#define FPROC_SIGSEGV          11
+#define FPROC_SIGUSR2          12
+#define FPROC_SIGTERM          15
+#define FPROC_SIGCHLD          17
+#define FPROC_SYS_SIGPROCMASK  41
+#define FPROC_SIG_BLOCK        0
+#define FPROC_SIG_UNBLOCK      1
+#define FPROC_SIG_SETMASK      2
 
 typedef struct faddr_space faddr_space_t;
 typedef struct fproc fproc_t;
@@ -108,7 +117,6 @@ typedef struct fsig {
     uint64_t handler;
     uint64_t restorer;
     uint32_t pending;
-    uint32_t blocked;
 } fsig_t;
 
 
@@ -144,9 +152,11 @@ struct fproc {
     fmap_t maps[FPROC_MAX_MAPS];
     uint64_t mmap_next;
     fsig_t sigs[FPROC_MAX_SIGNALS];
+    uint32_t sig_blocked;
     void *sig_frame;
     uint64_t sig_ret;
     void *fork_frame;
+    struct fproc *parent;
     struct fproc *children;
     struct fproc *next_sibling;
 };

@@ -49,7 +49,7 @@ if ! grep -Fq 'procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fau
     echo "missing: full procs demo"
     ok=0
 fi
-if ! grep -Fq 'abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK' "$LOG"; then
+if ! grep -Fq 'abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK' "$LOG"; then
     echo "missing: full process ABI suite"
     ok=0
 fi

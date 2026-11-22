@@ -61,7 +61,8 @@ Flow Group is an optional organization layer:
   1-CPU process ABI suite; arm64 platform probes for MMU, GIC/timer, 4-CPU
   SMP, EL0 user mode, the process ABI suite and virtio block storage.
 - User mode: x86_64 ring 3 and arm64 EL0 share one process core with a fd
-  table, `mmap`, `fork`, `exec`, SIGUSR1 delivery and cap transfer.
+  table, `mmap`, `fork`, `exec`, signal masks/pending sets/default actions and
+  cap transfer.
 - Release media: x86_64 BIOS/UEFI IMG and ISO; arm64 UEFI IMG and ISO.
 
 ## Status matrix
@@ -83,7 +84,7 @@ Flow Group is an optional organization layer:
 | Boot handoff | Implemented | Parse ACPI/DTB in platform services | `boot.h`, `bootinfo.c`, three producers; PMM consumes the map |
 | Kernel/user boundary | Partial | Small kernel, isolated drivers/services | `src/core/process.c` + x86/arm64 arch backends |
 | Driver framework | Partial | Hybrid kernel/user drivers | in-kernel block/filesystem code |
-| Native ABI | Partial | Stable Finte ABI and native libc | verb ABI; fd table, mmap, file-backed mmap, COW fork, waitpid, exec, signals, cap transfer, service registry and ET_DYN load on both arches |
+| Native ABI | Partial | Stable Finte ABI and native libc | verb ABI; fd table, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, cap transfer, service registry and ET_DYN load on both arches |
 | Security model | Partial | Capability revocation, DMA isolation, measured TCB | this directory |
 | Tests | Partial | Full cross-architecture semantic matrix | 24 host, x86 BIOS/UEFI/disk + 1-CPU ABI, arm64 MMU/timer/SMP/user/ABI/disk direct + UEFI |
 
@@ -130,9 +131,11 @@ system:
   frames and EL0/ring-3 entry. Address spaces are refcounted and Flow-owned, so
   flow death frees page tables even without `proc_destroy()`.
 - **The process ABI is still a demo subset.** Fork is copy-on-write,
-  anonymous mappings are capped, signals cover SIGUSR1/SIGKILL only, and there
-  is no job control or general POSIX fd layer. arm64 still lacks ACPI/DTB
-  parsing and GICv3; static-heap fallback remains for direct `-kernel` boot.
+  anonymous mappings are capped, signal masks/pending sets cover
+  SIGUSR1/2/SIGCHLD and default TERM/INT/SEGV but not SIGSTOP/cont or timers,
+  and there is no job control or general POSIX fd layer. arm64 still lacks
+  ACPI/DTB parsing and GICv3; static-heap fallback remains for direct
+  `-kernel` boot.
 - **The Linux persona is experimental.** It demonstrates syscall translation
   and a handful of POSIX-shaped operations. It is not Linux compatibility.
 - **The native ABI is not frozen.** The verb table is the current internal

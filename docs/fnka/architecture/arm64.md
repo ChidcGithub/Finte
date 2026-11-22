@@ -137,7 +137,7 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
 | SMP startup | Implemented (PSCI CPU_ON, 4 CPUs) |
 | User mode | Implemented (EL0, `svc #0`, shared process ABI) |
 | User address space | Implemented (4–5 GiB, per-process TTBR0 + ASID) |
-| Process ABI | Partial (fd table, mmap, file-backed mmap, COW fork, waitpid, exec, SIGUSR1, cap transfer, service registry, ET_DYN load) |
+| Process ABI | Partial (fd table, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, cap transfer, service registry, ET_DYN load) |
 | Block devices | Implemented (virtio-mmio legacy + modern) |
 | ACPI / Device Tree parsing | Missing (pointers passed only) |
 | GICv3 | Missing |
@@ -157,9 +157,10 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 ## 6. Known gaps
 
 - Fork shares pages read-only and copies on the first write (COW). Anonymous
-  mappings are capped at 64 pages per mapping. Signals cover SIGUSR1 delivery
-  and SIGKILL only.
-- There is no job control, per-process signal mask or general Linux fd table.
+  mappings are capped at 64 pages per mapping. Signals cover masks, pending
+  sets, SIGUSR1/2/SIGCHLD handlers and default SIGTERM/SIGINT/SIGSEGV
+  termination, plus SIGKILL; SIGSTOP/cont and signal timers are absent.
+- There is no job control or general Linux fd table.
 - Address-space teardown is Flow-owned; `proc_destroy()` only frees the process
   object. A fork child that is still live when its parent is destroyed is
   aborted and left for flow death rather than synchronously reaped.
@@ -179,7 +180,7 @@ Do not claim cross-architecture parity until the corresponding tests exist.
   timer ticks, SMP flow distribution, `init.elf` at EL0, the full
   `procs` IPC/shared-memory/arena/time/preemption/fault demo, and the shared
   process ABI suite (fd table, mmap, file-backed mmap, COW fork, waitpid, exec,
-  signal, cap transfer,
+  signal masks/sigset, cap transfer,
   service registry, ET_DYN load, churn, blocked-flow abort) plus 147 core
   checks, PASS.
 - `make arm64-uefi-test`: AAVMF ISO, boot protocol v1, PMM, MMU, GICv2, timer

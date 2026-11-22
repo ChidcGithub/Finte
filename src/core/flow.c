@@ -295,6 +295,12 @@ void finte_flow_exit(fflow_t *f, int code)
         p->flow = NULL;
         p->exit_code = (uint32_t)code;
         f->user = NULL;
+        if (p->parent && p->parent->flow) {
+            p->parent->sigs[FPROC_SIGCHLD].pending = 1;
+            if (p->parent->flow->thread) {
+                finte_sched_wake_thread(p->parent->flow->thread);
+            }
+        }
     }
 
     /* Wake flows that are waiting for this one to finish. */
