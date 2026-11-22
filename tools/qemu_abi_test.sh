@@ -73,6 +73,15 @@ run_once() {
         uname -m
         command -v qemu-system-x86_64 || echo "qemu binary missing"
         qemu-system-x86_64 --version 2>&1 | head -2 || true
+        cc --version 2>&1 | head -1 || true
+        sha256sum build/kernel64.elf build/finte-bios.img 2>/dev/null || true
+        if [ -f build/kernel64.elf ]; then
+            echo "--- kernel address 0x4012d40 ---"
+            addr2line -e build/kernel64.elf -f -C 0x4012d40 || true
+            objdump -d --start-address=0x4012d20 \
+                --stop-address=0x4012d80 build/kernel64.elf 2>/dev/null |
+                tail -20 || true
+        fi
         echo "qemu exit status: $qstatus"
         timeout 3 qemu-system-x86_64 -machine pc -accel tcg -display none \
             -serial none -monitor none -no-reboot -S >/dev/null 2>&1
