@@ -24,7 +24,7 @@ run_once() {
         -drive if=floppy,format=raw,file=build/finte-bios.img -boot a \
         -display none -monitor none -no-reboot -snapshot \
         -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-        -serial stdio -D "$QEMULOG" -d int,guest_errors < "$FIFO" > "$LOG" 2>&1 &
+        -serial stdio -D "$QEMULOG" -d guest_errors < "$FIFO" > "$LOG" 2>&1 &
     local qpid=$!
     exec 3<>"$FIFO"  # open both ends so startup cannot block the script
 
@@ -115,6 +115,7 @@ if run_once || { echo "x86 process ABI test: retrying"; run_once; }; then
     exit 0
 fi
 echo "x86 process ABI test: FAILED"
+grep -A24 "kernel address 0x4012d40" "$LOG" 2>/dev/null || true
 tail -80 "$LOG" | tr -d '\000' | sed 's/\x1b\[[0-9;]*m//g'
 if [ -s "$QEMULOG" ]; then
     echo "--- QEMU internal log ---"
