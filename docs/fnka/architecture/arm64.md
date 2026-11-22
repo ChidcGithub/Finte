@@ -137,15 +137,15 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
 | SMP startup | Implemented (PSCI CPU_ON, 4 CPUs) |
 | User mode | Implemented (EL0, `svc #0`, shared process ABI) |
 | User address space | Implemented (4–5 GiB, per-process TTBR0 + ASID) |
-| Process ABI | Partial (fd table, mmap, COW fork, waitpid, exec, SIGUSR1, cap transfer, service registry, ET_DYN load) |
+| Process ABI | Partial (fd table, mmap, file-backed mmap, COW fork, waitpid, exec, SIGUSR1, cap transfer, service registry, ET_DYN load) |
 | Block devices | Implemented (virtio-mmio legacy + modern) |
 | ACPI / Device Tree parsing | Missing (pointers passed only) |
 | GICv3 | Missing |
 
 ## 5. Next priorities
 
-1. Extend the user ABI with a fuller signal set, file-backed mappings and
-   general file descriptors for the Linux persona.
+1. Extend the user ABI with a fuller signal set and general file descriptors
+   for the Linux persona.
 2. ACPI/DTB parsing for platform discovery.
 3. GICv3 support if a target requires it.
 4. Virtio IRQ/feature work and a reusable DMA/block framework.
@@ -178,7 +178,8 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 - `make arm64-test`: QEMU `virt`, 4 CPUs, MMU identity translations, GICv2
   timer ticks, SMP flow distribution, `init.elf` at EL0, the full
   `procs` IPC/shared-memory/arena/time/preemption/fault demo, and the shared
-  process ABI suite (fd table, mmap, COW fork, waitpid, exec, signal, cap transfer,
+  process ABI suite (fd table, mmap, file-backed mmap, COW fork, waitpid, exec,
+  signal, cap transfer,
   service registry, ET_DYN load, churn, blocked-flow abort) plus 147 core
   checks, PASS.
 - `make arm64-uefi-test`: AAVMF ISO, boot protocol v1, PMM, MMU, GICv2, timer

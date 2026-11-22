@@ -61,6 +61,7 @@
 #define FPROC_SYS_SERVICE_LOOK 16
 #define FPROC_SYS_SERVICE_UNREG 17
 #define FPROC_SYS_DYNSVC       18
+#define FPROC_SYS_MMAP_FILE    19
 #define FPROC_SYS_GETPID       39
 #define FPROC_SYS_WAITPID      40
 #define FPROC_WNOHANG          1

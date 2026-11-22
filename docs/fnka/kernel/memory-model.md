@@ -2,8 +2,8 @@
 
 > **Status:** Partial — a shared physical page manager consumes Boot Protocol
 > v1, and both x86_64 and arm64 have Flow-owned private user page tables at
-> 4–5 GiB with anonymous `mmap`, copy-on-write fork and arm64 ASIDs. There is
-> no demand paging or swap.
+> 4–5 GiB with anonymous and file-backed private `mmap`, copy-on-write fork and
+> arm64 ASIDs. There is no demand paging or swap.
 >
 > **Normative for:** physical memory, virtual address spaces, kernel/user
 > layout, allocation and mapping ownership.
@@ -146,8 +146,9 @@ never treated as user pointers.
   address space; exec builds a fresh space and closes non-console fds.
 - An Arena owns its backing pages until the Arena is destroyed.
 - A Channel owns queued messages and their attached capability references.
-- Anonymous `mmap`/`munmap` exist with a 64-page-per-mapping cap; there is no
-  file-backed mmap or demand paging.
+- Anonymous `mmap`/`munmap` exist with a 64-page-per-mapping cap. File-backed
+  private `mmap` copies the fd's bytes into private pages; there is no demand
+  paging.
 
 ## 7. Target model
 
@@ -218,8 +219,9 @@ The target contract requires:
   pages and the isolated `procs` demo.
 - `make arm64-uefi-test`: same checks plus PMM counts from the UEFI memory map.
 - `make arm64-disk-test`: virtio-mmio lfc1/ext4/NTFS reads (legacy + modern).
-- `make abi-test`: x86_64 fd table, mmap, COW fork, waitpid, exec, signal,
-  cap transfer, churn, blocked-flow abort and RX/RW-NX PTE checks.
+- `make abi-test`: x86_64 fd table, anonymous and file-backed mmap, COW fork,
+  waitpid, exec, signal, cap transfer, churn, blocked-flow abort and
+  RX/RW-NX PTE checks.
 - `make arm64-test`: the same shared ABI suite on 4 CPUs plus the EL0/procs
   demos and Flow-owned space release.
 - No shared-address-space TLB shootdown or reclaim test yet.

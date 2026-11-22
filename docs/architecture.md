@@ -141,9 +141,9 @@ The core flow model does not create an implicit process tree:
 - Spawning a kernel flow is `finte_flow_create` + `finte_cap_install` +
   `finte_flow_start`; authority is installed explicitly, not inherited.
 - The native user ABI now provides `fork`, blocking `waitpid` with status and
-  child reaping, `exec`, a per-process fd table, anonymous `mmap` and SIGUSR1
-  delivery for demo processes. Fork copies the address space and fd table; it
-  is not a global Unix process tree.
+  child reaping, `exec`, a per-process fd table, anonymous and file-backed
+  private `mmap` and SIGUSR1 delivery for demo processes. Fork copies the
+  address space and fd table; it is not a global Unix process tree.
 - The program image is still immutable; `exec` replaces the user space with a
   freshly loaded image.
 
@@ -584,8 +584,8 @@ The native user ABI is `int 0x80` with `rax` as the call number:
 private-data isolation, a 50 ms sleep, two CPU-bound tasks with a heartbeat, and
 a deliberate read of supervisor memory that kills only the offending process.
 
-Still missing: full POSIX signals (only SIGUSR1 and SIGKILL), file-backed
-`mmap`, job control and a Linux-persona fd table.
+Still missing: full POSIX signals (only SIGUSR1 and SIGKILL), job control and
+a Linux-persona fd table.
 
 ## 13. HAL and portability
 

@@ -897,6 +897,19 @@ static int fd_read(fproc_t *p, int fd, void *dst, size_t len)
     return -1;
 }
 
+static int fd_pread(fproc_t *p, int fd, uint64_t offset, void *dst, size_t len)
+{
+    if (!p || fd < 0 || fd >= FPROC_MAX_FDS || !p->fds[fd].used) {
+        return -1;
+    }
+    ffd_t *e = &p->fds[fd];
+    uint64_t saved = e->offset;
+    e->offset = offset;
+    int n = fd_read(p, fd, dst, len);
+    e->offset = saved;
+    return n;
+}
+
 static int fd_write(fproc_t *p, int fd, const void *src, size_t len)
 {
     if (!p || fd < 0 || fd >= FPROC_MAX_FDS || !p->fds[fd].used) {
@@ -1391,6 +1404,88 @@ static uint64_t sys_mmap(fproc_t *p, uint64_t addr, uint64_t len, uint64_t prot)
     return va;
 }
 
+static uint64_t sys_mmap_file(fproc_t *p, uint64_t fd, uint64_t len,
+                              uint64_t prot)
+{
+    if (!p || !p->space || fd >= FPROC_MAX_FDS || len == 0) {
+        return (uint64_t)-1;
+    }
+    ffd_t *e = &p->fds[fd];
+    if (!e->used || e->kind == FPROC_FD_CONSOLE) {
+        return (uint64_t)-1;
+    }
+    if (prot == 0) {
+        prot = FPROC_PROT_READ | FPROC_PROT_WRITE;
+    }
+    if (!(prot & FPROC_PROT_READ)) {
+        return (uint64_t)-1;
+    }
+    uint64_t pages64 = (len + 4095u) / 4096u;
+    if (pages64 == 0 || pages64 > FPROC_MAX_MAP_PAGES) {
+        return (uint64_t)-1;
+    }
+    uint32_t pages = (uint32_t)pages64;
+    int slot = -1;
+    for (int i = 0; i < FPROC_MAX_MAPS; i++) {
+        if (!p->maps[i].used) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return (uint64_t)-1;
+    }
+    uint64_t va = (p->mmap_next + 0xFFFu) & ~0xFFFull;
+    uint64_t end = va + (uint64_t)pages * 4096u;
+    if (end < va || va < FPROC_MMAP_BASE || end > FPROC_MMAP_LIMIT) {
+        return (uint64_t)-1;
+    }
+    for (uint32_t i = 0; i < pages; i++) {
+        void *page = finte_as_alloc_page(p->space);
+        if (!page) {
+            for (uint32_t j = 0; j < i; j++) {
+                uint64_t pa = 0;
+                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
+                    pa) {
+                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
+                }
+            }
+            return (uint64_t)-1;
+        }
+        int n = fd_pread(p, (int)fd, (uint64_t)i * 4096u, page, 4096);
+        if (n < 0) {
+            finte_as_free_page(p->space, page);
+            for (uint32_t j = 0; j < i; j++) {
+                uint64_t pa = 0;
+                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
+                    pa) {
+                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
+                }
+            }
+            return (uint64_t)-1;
+        }
+        if (finte_as_map(p->space, va + i * 4096u,
+                         (uint64_t)(uintptr_t)page, (uint32_t)prot) != 0) {
+            finte_as_free_page(p->space, page);
+            for (uint32_t j = 0; j < i; j++) {
+                uint64_t pa = 0;
+                if (finte_as_unmap(p->space, va + j * 4096u, &pa) == 0 &&
+                    pa) {
+                    finte_as_free_page(p->space, (void *)(uintptr_t)pa);
+                }
+            }
+            return (uint64_t)-1;
+        }
+    }
+    p->maps[slot].used = 1;
+    p->maps[slot].va = va;
+    p->maps[slot].len = (uint64_t)pages * 4096u;
+    p->maps[slot].prot = (uint8_t)prot;
+    p->maps[slot].page_count = (uint16_t)pages;
+    p->mmap_next = end;
+    return va;
+}
+
 static int sys_munmap(fproc_t *p, uint64_t va, uint64_t len)
 {
     if (!p || len == 0) {
@@ -1550,6 +1645,9 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
     }
     if (nr == FPROC_SYS_MMAP) {
         return sys_mmap(p, a0, a1, a2);
+    }
+    if (nr == FPROC_SYS_MMAP_FILE) {
+        return sys_mmap_file(p, a0, a1, a2);
     }
     if (nr == FPROC_SYS_MUNMAP) {
         return (uint64_t)sys_munmap(p, a0, a1);
@@ -2315,6 +2413,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage wait done\n", 23);
     int cow_rc = finte_usermode_run("cow.elf");
     hal_console_write("[abi] stage cow done\n", 22);
+    int filemap_rc = finte_usermode_run("filemap.elf");
+    hal_console_write("[abi] stage filemap done\n", 26);
     int exec_rc = finte_usermode_run("exec.elf");
     hal_console_write("[abi] stage exec done\n", 23);
     int sig_rc = proc_signal_test();
@@ -2353,11 +2453,11 @@ int finte_proc_abi_test(void)
     char buf[192];
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
-                         "exec=%s signal=%s cap=%s service=%s bad=%s dyn=%s "
-                         "churn=%s blocked=%s\n",
+                         "filemap=%s exec=%s signal=%s cap=%s service=%s "
+                         "bad=%s dyn=%s churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
-                         ok_str(cow_rc == 0),
+                         ok_str(cow_rc == 0), ok_str(filemap_rc == 0),
                          ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(cap_rc == 0),
                          ok_str(svc_rc == 0), ok_str(bad_rc == 0),
@@ -2368,7 +2468,7 @@ int finte_proc_abi_test(void)
     }
     hal_watchdog_resume();
     return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
-            cow_rc == 0 && exec_rc == 0 &&
+            cow_rc == 0 && filemap_rc == 0 && exec_rc == 0 &&
             sig_rc == 0 && cap_rc == 0 && svc_rc == 0 && bad_rc == 0 &&
             dyn_rc == 0 && churn_rc == 0 && blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

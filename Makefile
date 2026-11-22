@@ -45,7 +45,7 @@ ARM64_USER_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -ffreestanding \
                      -fno-unwind-tables -fno-asynchronous-unwind-tables \
                      -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
                      -Wall -Wextra
-USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn wait cow exit block
+USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn wait cow filemap exit block
 USER_ELF := $(addprefix $(BUILD)/,$(addsuffix .elf,$(USER_PROGS)))
 ARM64_USER_ELF := $(addprefix $(BUILD)/arm64/,$(addsuffix .elf,$(USER_PROGS)))
 
@@ -144,7 +144,7 @@ arm64-test: arm64
 	    grep -q "arm64 user: init.elf PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 procs: PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 abi: PASS" $(BUILD)/arm64.log && \
-	    grep -Fq "abi] space=OK user=OK fork=OK wait=OK cow=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
+	    grep -Fq "abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
 	    grep -Fq "procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK" $(BUILD)/arm64.log; then \
 	  echo "arm64 boot test: OK"; \
 	else \
@@ -274,16 +274,16 @@ $(BUILD)/finte.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin $(BUILD)/kernel64.bin 
 	  --ramdisk $(BUILD)/initrd.bin --efi $(BUILD)/uefi/BOOTX64.EFI \
 	  --out $@
 
-# A BIOS-only El Torito hard-disk image. It contains the same stage-1,
-# stage-2, kernel and ramdisk as finte.img, with a small MBR partition whose
-# CHS geometry fits below the EBDA.
+# A BIOS-only El Torito floppy image (1.44 MB). It contains the same stage-1,
+# stage-2, kernel and ramdisk as finte.img and boots both as a QEMU floppy and
+# as the ISO's floppy-emulated El Torito boot image.
 $(BUILD)/finte-bios.img: $(BUILD)/boot.bin $(BUILD)/stage2.bin \
                          $(BUILD)/kernel64.bin $(BUILD)/initrd.bin \
                          tools/mkimage.py
 	$(PYTHON) tools/mkimage.py --boot $(BUILD)/boot.bin \
 	  --stage2 $(BUILD)/stage2.bin --kernel $(BUILD)/kernel64.bin \
-	  --ramdisk $(BUILD)/initrd.bin --esp-size-mb 0 --pad-to 294912 \
-	  --mbr-chs 0,1,0,1,18,15 --out $@
+	  --ramdisk $(BUILD)/initrd.bin --esp-size-mb 0 --pad-to 1474560 \
+	  --out $@
 
 # FAT16 ESPs used inside ISO images. FAT16 keeps the El Torito image below
 # the 16-bit sector-count limit.

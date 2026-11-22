@@ -22,6 +22,10 @@ Short notes only. GitHub releases carry the per-commit changes.
   counts mapping spaces, and the first write copies (or upgrades the last owner
   in place). Write faults are resolved in the x86 page-fault return path and
   the arm64 data-abort path; kernel user-copy paths COW before writing.
+- Added file-backed private `mmap`: the kernel reads the fd's bytes into private
+  pages, so writes to the mapping never modify the underlying file. The new
+  `filemap.elf` checks the mapped contents, a private write and an unchanged
+  fd read.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.
