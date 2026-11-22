@@ -964,7 +964,8 @@ static int parse_count(const char *arg, int def)
     return v > 0 ? v : def;
 }
 
-static int read_all(const char *path, uint8_t **out, size_t *out_len)
+static int read_all(const char *path, uint8_t **out, size_t *out_len,
+                    size_t *out_alloc)
 {
     fdfs_stat_t st;
     int rc = finte_disk_stat(path, &st);
@@ -974,7 +975,8 @@ static int read_all(const char *path, uint8_t **out, size_t *out_len)
     if (st.mode != FDISK_MODE_FILE || st.size > 1024u * 1024u) {
         return FINTE_ERR_LIMIT;
     }
-    uint8_t *buf = (uint8_t *)hal_pages_alloc((size_t)st.size + 1);
+    size_t alloc = ((size_t)st.size + 1u + 4095u) & ~(size_t)4095u;
+    uint8_t *buf = (uint8_t *)hal_pages_alloc(alloc);
     if (!buf) {
         return FINTE_ERR_NOMEM;
     }
@@ -982,7 +984,7 @@ static int read_all(const char *path, uint8_t **out, size_t *out_len)
     uint16_t cap;
     rc = sh_file_open(path, FINTE_OPEN_READ, &h, &cap, FINTE_R_READ);
     if (rc != 0) {
-        hal_pages_free(buf, (size_t)st.size + 1);
+        hal_pages_free(buf, alloc);
         return rc;
     }
     size_t got = 0;
@@ -1000,12 +1002,13 @@ static int read_all(const char *path, uint8_t **out, size_t *out_len)
     }
     sh_file_close(h, cap);
     if (rc != 0) {
-        hal_pages_free(buf, (size_t)st.size + 1);
+        hal_pages_free(buf, alloc);
         return rc;
     }
     buf[got] = 0;
     *out = buf;
     *out_len = got;
+    *out_alloc = alloc;
     return 0;
 }
 
@@ -1024,7 +1027,8 @@ static void cmd_head(const sh_ctx_t *ctx)
     }
     uint8_t *buf;
     size_t len;
-    int rc = read_all(path, &buf, &len);
+    size_t alloc;
+    int rc = read_all(path, &buf, &len, &alloc);
     if (rc != 0) {
         sh_printf("head: %s\n", finte_disk_error(rc));
         return;
@@ -1043,7 +1047,7 @@ static void cmd_head(const sh_ctx_t *ctx)
     if (len && i == len && buf[len - 1] != '\n') {
         sh_puts("\n");
     }
-    hal_pages_free(buf, len + 1);
+    hal_pages_free(buf, alloc);
 }
 
 static void cmd_tail(const sh_ctx_t *ctx)
@@ -1061,7 +1065,8 @@ static void cmd_tail(const sh_ctx_t *ctx)
     }
     uint8_t *buf;
     size_t len;
-    int rc = read_all(path, &buf, &len);
+    size_t alloc;
+    int rc = read_all(path, &buf, &len, &alloc);
     if (rc != 0) {
         sh_printf("tail: %s\n", finte_disk_error(rc));
         return;
@@ -1085,7 +1090,7 @@ static void cmd_tail(const sh_ctx_t *ctx)
     if (len && buf[len - 1] != '\n') {
         sh_puts("\n");
     }
-    hal_pages_free(buf, len + 1);
+    hal_pages_free(buf, alloc);
 }
 
 static void cmd_hexdump(const sh_ctx_t *ctx)

@@ -38,6 +38,11 @@ ARM64_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -g -ffreestanding \
                 -fno-unwind-tables -fno-asynchronous-unwind-tables \
                 -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
                 -Wall -Wextra -Isrc/include -I$(BUILD)
+ARM64_USER_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -ffreestanding \
+                     -fno-builtin -fno-pic -fno-pie -fno-stack-protector \
+                     -fno-unwind-tables -fno-asynchronous-unwind-tables \
+                     -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
+                     -Wall -Wextra
 
 HEADERS := $(wildcard src/include/finte/*.h)
 CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c src/core/channel.c \
@@ -60,15 +65,19 @@ KERNEL_OBJ := $(patsubst %.c,$(BUILD)/kobj/%.o,$(KERNEL_SRC)) \
               $(patsubst %.S,$(BUILD)/kobj/asm/%.o,$(KERNEL_ASM))
 
 ARM64_SRC := $(CORE_SRC) src/arch/arm64/kmain_arm64.c src/arch/arm64/hal_arm64.c \
-             src/arch/arm64/mmu.c src/arch/arm64/gic.c src/arch/arm64/string.c
-ARM64_ASM := src/arch/arm64/entry.S src/arch/arm64/context.S src/arch/arm64/ap_entry.S
+             src/arch/arm64/mmu.c src/arch/arm64/gic.c src/arch/arm64/process.c \
+             src/arch/arm64/virtio_blk.c src/arch/arm64/string.c
+ARM64_ASM := src/arch/arm64/entry.S src/arch/arm64/context.S \
+             src/arch/arm64/ap_entry.S src/arch/arm64/usermode.S
 ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
-             $(patsubst %.S,$(BUILD)/arm64/obj/%.o,$(ARM64_ASM))
+             $(patsubst %.S,$(BUILD)/arm64/obj/%.o,$(ARM64_ASM)) \
+             $(BUILD)/arm64/obj/src/arch/arm64/initrd_blob.o
 
 .PHONY: all host kernel kernel-elf image uefi bootloader initrd test selfcheck \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
         disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
-        arm64 arm64-test arm64-uefi-test qemu-arm64 images iso
+        arm64 arm64-test arm64-uefi-test arm64-disk-test arm64-uefi-disk-test \
+        qemu-arm64 images iso
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
@@ -86,6 +95,31 @@ $(BUILD)/arm64/obj/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(ARM64_CC) --target=$(ARM64_TARGET) -c $< -o $@
 
+$(BUILD)/arm64/init.elf: src/user/init.c src/user/syscall.h src/user/user_arm64.ld
+	@mkdir -p $(BUILD)/arm64
+	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c src/user/init.c \
+	  -o $(BUILD)/arm64/init.o
+	$(ARM64_LD) -T src/user/user_arm64.ld -o $@ $(BUILD)/arm64/init.o
+
+$(BUILD)/arm64/ipc.elf: src/user/ipc.c src/user/syscall.h src/user/user_arm64.ld
+	@mkdir -p $(BUILD)/arm64
+	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c src/user/ipc.c \
+	  -o $(BUILD)/arm64/ipc.o
+	$(ARM64_LD) -T src/user/user_arm64.ld -o $@ $(BUILD)/arm64/ipc.o
+
+$(BUILD)/arm64/initrd.bin: $(BUILD)/arm64/init.elf $(BUILD)/arm64/ipc.elf \
+                           tools/mkinitrd.py
+	$(PYTHON) tools/mkinitrd.py --dir src/ramdisk --out $@ \
+	  --extra init.elf=$(BUILD)/arm64/init.elf \
+	  --extra ipc.elf=$(BUILD)/arm64/ipc.elf
+
+$(BUILD)/arm64/initrd_blob.c: $(BUILD)/arm64/initrd.bin tools/mkbinarray.py
+	$(PYTHON) tools/mkbinarray.py $< $@ initrd_bin
+
+$(BUILD)/arm64/obj/src/arch/arm64/initrd_blob.o: $(BUILD)/arm64/initrd_blob.c
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) $(ARM64_CFLAGS) -c $< -o $@
+
 $(BUILD)/finte-arm64.elf: $(ARM64_OBJ) src/arch/arm64/kernel.ld
 	$(ARM64_LD) -T src/arch/arm64/kernel.ld -o $@ $(ARM64_OBJ)
 
@@ -99,7 +133,10 @@ arm64-test: arm64
 	    grep -q "mmu: identity translations ok" $(BUILD)/arm64.log && \
 	    grep -q "arm64 timer: gic=v2 ticks=[1-9]" $(BUILD)/arm64.log && \
 	    grep -q "arm64 smp: 3 application processor(s) online, 4 cpu(s) total" $(BUILD)/arm64.log && \
-	    grep -q "arm64 smp: hits=2/2/2/2" $(BUILD)/arm64.log; then \
+	    grep -q "arm64 smp: hits=2/2/2/2" $(BUILD)/arm64.log && \
+	    grep -q "arm64 user: init.elf PASS" $(BUILD)/arm64.log && \
+	    grep -q "arm64 procs: PASS" $(BUILD)/arm64.log && \
+	    grep -Fq "procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK" $(BUILD)/arm64.log; then \
 	  echo "arm64 boot test: OK"; \
 	else \
 	  echo "arm64 boot test: FAILED"; tail -80 $(BUILD)/arm64.log; exit 1; \
@@ -108,6 +145,14 @@ arm64-test: arm64
 arm64-uefi-test: $(BUILD)/finte-arm64.iso
 	AAVMF_CODE=$(AAVMF_CODE) AAVMF_VARS=$(AAVMF_VARS) \
 	  bash tools/qemu_arm64_uefi_test.sh
+
+arm64-disk-test: arm64 $(BUILD)/disk-test.img
+	QEMU_ARM64=$(QEMU_ARM64) \
+	  bash tools/qemu_arm64_disk_test.sh direct
+
+arm64-uefi-disk-test: $(BUILD)/finte-arm64.iso $(BUILD)/disk-test.img
+	QEMU_ARM64=$(QEMU_ARM64) AAVMF_CODE=$(AAVMF_CODE) AAVMF_VARS=$(AAVMF_VARS) \
+	  bash tools/qemu_arm64_disk_test.sh uefi
 
 qemu-arm64: arm64
 	$(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 4 \

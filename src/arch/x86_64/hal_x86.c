@@ -702,7 +702,7 @@ fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes)
         return NULL;
     }
     void *stack = NULL;
-    if (stack_bytes == FLOW_STACK_BYTES && g_free_stacks) {
+    if (!pmm_active() && stack_bytes == FLOW_STACK_BYTES && g_free_stacks) {
         uint64_t flags = hal_irq_save();
         page_link_t *block = g_free_stacks;
         if (block) {
@@ -756,7 +756,7 @@ void hal_ctx_destroy(fhal_ctx_t *ctx)
     void *stack = ctx->stack;
     size_t bytes = ctx->stack_size;
     hal_pages_free(ctx, 4096);
-    if (stack && bytes == FLOW_STACK_BYTES) {
+    if (!pmm_active() && stack && bytes == FLOW_STACK_BYTES) {
         uint64_t flags = hal_irq_save();
         page_link_t *link = (page_link_t *)stack;
         link->next = g_free_stacks;
@@ -765,9 +765,10 @@ void hal_ctx_destroy(fhal_ctx_t *ctx)
         hal_irq_restore(flags);
         return;
     }
-    for (size_t off = 0; stack && off < bytes; off += 4096u) {
-        hal_pages_free((uint8_t *)stack + off, 4096);
-    }
+    /* With the PMM active, return the whole 32 KiB flow stack in one call so
+     * the allocator sees the exact page count. The static-cache path remains
+     * for the no-boot-info fallback. */
+    hal_pages_free(stack, bytes);
 }
 
 void hal_ctx_switch(fhal_ctx_t *from, fhal_ctx_t *to)

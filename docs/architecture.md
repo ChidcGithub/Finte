@@ -378,7 +378,9 @@ Finte does not use GRUB. One hybrid raw image contains two independent boot path
 
 ### Kernel
 
-- `src/arch/x86_64/entry64.S` clears `.bss` (the 32 MiB heap) and calls `kmain`.
+- `src/arch/x86_64/entry64.S` clears `.bss` (including the 32 MiB fallback heap)
+  and calls `kmain`; the PMM takes over page allocation when boot info carries
+  a memory map.
 - IDT with 32 exception stubs, a timer gate on `0x20`, a reschedule IPI gate,
   and an `int 0x80` gate;
   a fault prints vector and CR2. Gate selectors follow the live `CS`, so the
@@ -524,8 +526,8 @@ variable:
 | environment | backing | isolation |
 | --- | --- | --- |
 | host simulator | `malloc`-aligned pages | one process, one address space |
-| kernel flows | 32 MiB static bump heap | one address space, ring 0 |
-| user processes | private 4 KiB pages per process | own PML4, CPL3, supervisor kernel map |
+| kernel flows | PMM pages; 32 MiB static heap fallback | one address space, ring 0 |
+| user processes | private 4 KiB pages per process | own PML4/root, CPL3/EL0, supervisor kernel map |
 
 Native kernel flows are still ring-0 code and can touch the whole image.
 User processes use a private PML4 built by `src/arch/x86_64/process.c`:
@@ -584,12 +586,15 @@ firmware-call window. Platform-specific boot data and UEFI hooks live in
 - **x86_64** (`src/arch/x86_64/`): VGA/GOP/serial consoles, PIT/LAPIC/TSC
   timers, CR3 address spaces, ATA/AHCI/UEFI block devices.
 - **arm64** (`src/arch/arm64/`): QEMU `virt` with a PL011 console, `CNTPCT_EL0`
-  timebase, PSCI power-off, DAIF interrupt masking, TTBR0 address-space hook,
-  packed context switch, and an EL0 exception vector table. Block devices are
-  not wired yet.
-- `make arm64-test` boots the arm64 ELF and runs the same **147** core checks.
-  The Linux syscall persona remains x86_64-numbered; the arm64 port currently
-  exercises the core and scheduler, not the shell or disk stack.
+  timebase, PSCI power-off/CPU_ON, DAIF interrupt masking, identity MMU with
+  per-process TTBR0 roots, packed context switch, EL0 exception vectors and
+  `svc #0` syscalls, GICv2 timer/IPI, and a polled legacy/modern virtio-mmio
+  block driver.
+- `make arm64-test` boots the arm64 ELF, runs the same **147** core checks, and
+  runs `init.elf` plus the four-process IPC/shared-memory/preemption demo at
+  EL0. The arm64 port has no shell; `arm64-disk-test` exercises lfc1/ext4/NTFS
+  directly from `kmain_arm64`. The Linux syscall persona remains
+  x86_64-numbered.
 - The public CPU/context fields are neutral (`hw_id`, `timer_mode`,
   `addr_space`, `sp`), so adding another platform does not change core code.
 

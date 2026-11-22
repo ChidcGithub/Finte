@@ -121,17 +121,37 @@ void arm64_irq_handler(uint64_t *frame)
     }
 }
 
+extern uint64_t arm64_process_syscall(uint64_t *frame);
+
 void arm64_sync_handler(uint64_t *frame)
 {
     uint64_t esr = frame[FRAME_ESR];
     uint64_t far = frame[FRAME_FAR];
     uint64_t elr = frame[FRAME_ELR];
     uint64_t spsr = frame[FRAME_SPSR];
+    unsigned ec = (unsigned)((esr >> 26) & 0x3Fu);
+    int from_el0 = (spsr & 0xFu) == 0;
+
+    if (from_el0 && ec == 0x15u) { /* SVC from AArch64 EL0 */
+        frame[0] = arm64_process_syscall(frame);
+        /* SVC's preferred return address already points past the
+         * instruction; do not advance ELR again. */
+        return;
+    }
+    if (from_el0 && (ec == 0x20u || ec == 0x21u || ec == 0x22u ||
+                     ec == 0x24u || ec == 0x25u || ec == 0x26u ||
+                     ec == 0x3Cu)) {
+        finte_user_fault(ec, elr, far);
+        /* No user process owned this fault: fall through to the panic. */
+    }
+
     char buf[192];
     int n = finte_format(buf, sizeof(buf),
-                         "\n[arm64] exception esr=0x%llx far=0x%llx elr=0x%llx spsr=0x%llx\n",
-                         (unsigned long long)esr, (unsigned long long)far,
-                         (unsigned long long)elr, (unsigned long long)spsr);
+                         "\n[arm64] exception ec=0x%x esr=0x%llx far=0x%llx "
+                         "elr=0x%llx spsr=0x%llx\n",
+                         ec, (unsigned long long)esr,
+                         (unsigned long long)far, (unsigned long long)elr,
+                         (unsigned long long)spsr);
     if (n > 0) {
         hal_console_write(buf, (size_t)n);
     }

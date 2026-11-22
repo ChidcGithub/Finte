@@ -1,14 +1,94 @@
 /* Minimal arm64 QEMU virt kernel: initialize the HAL and run the core suite. */
 #include "finte/finte.h"
 #include "finte/boot.h"
+#include "finte/initrd.h"
 #include "finte/selftest.h"
 
 extern char __bss_end[];
 extern void arm64_mmu_init(const fboot_info_t *bi);
 extern int arm64_mmu_enabled(void);
 extern int arm64_mmu_va_bits(void);
+extern const unsigned char initrd_bin[];
+extern const unsigned int initrd_bin_len;
 
 static volatile uint32_t g_smp_hits[FINTE_MAX_CPUS];
+
+static void arm64_disk_check(void)
+{
+    char buf[256];
+    char src[FDISK_NAME_MAX];
+    char target[FDISK_PATH_MAX];
+    char path[FDISK_PATH_MAX];
+    fdfs_info_t info;
+    char text[96];
+
+    int count = finte_disk_count();
+    int n = finte_format(buf, sizeof(buf),
+                         "arm64 disk: %d block device(s)\n", count);
+    if (n > 0) {
+        hal_console_write(buf, (size_t)n);
+    }
+    for (int d = 0; d < count; d++) {
+        const fdisk_dev_t *dev = finte_disk_get(d);
+        if (!dev) {
+            continue;
+        }
+        n = finte_format(buf, sizeof(buf),
+                         "arm64 disk: %s %llu sectors sector=%u scheme=%u "
+                         "parts=%d\n",
+                         dev->name, (unsigned long long)dev->sectors,
+                         (unsigned)dev->sector_size, (unsigned)dev->scheme,
+                         dev->part_count);
+        if (n > 0) {
+            hal_console_write(buf, (size_t)n);
+        }
+        for (int p = 0; p < dev->part_count; p++) {
+            const fdisk_part_t *part = finte_disk_part(d, p);
+            if (!part || !part->present || part->number == 0) {
+                continue;
+            }
+            finte_format(src, sizeof(src), "%sp%u", dev->name,
+                         (unsigned)part->number);
+            finte_format(target, sizeof(target), "/mnt%u",
+                         (unsigned)part->number);
+            int mr = finte_disk_mount(src, target, NULL);
+            if (mr != 0) {
+                n = finte_format(buf, sizeof(buf),
+                                 "arm64 disk: %s mount failed (%s)\n",
+                                 src, finte_disk_error(mr));
+                if (n > 0) {
+                    hal_console_write(buf, (size_t)n);
+                }
+                continue;
+            }
+            if (finte_disk_info(target, &info) == 0) {
+                n = finte_format(buf, sizeof(buf),
+                                 "arm64 disk: %s %s label=%s block=%u\n",
+                                 src, info.fstype, info.label,
+                                 (unsigned)info.block_size);
+                if (n > 0) {
+                    hal_console_write(buf, (size_t)n);
+                }
+            }
+            finte_format(path, sizeof(path), "%s/hello.txt", target);
+            int64_t got = finte_disk_read(path, 0, text, sizeof(text) - 1u);
+            if (got > 0) {
+                int64_t len = got;
+                while (len > 0 &&
+                       (text[len - 1] == '\n' || text[len - 1] == '\r')) {
+                    len--;
+                }
+                text[len] = '\0';
+                n = finte_format(buf, sizeof(buf),
+                                 "arm64 disk: %s hello=\"%s\"\n", src, text);
+                if (n > 0) {
+                    hal_console_write(buf, (size_t)n);
+                }
+            }
+            (void)finte_disk_umount(target);
+        }
+    }
+}
 
 static int arm64_translates(uint64_t va, uint64_t *pa)
 {
@@ -153,6 +233,11 @@ void kmain_arm64(uint64_t boot_arg, uint64_t magic)
     }
 
     finte_init();
+    if (finte_initrd_init(initrd_bin, initrd_bin_len) == 0) {
+        aputs("initrd: embedded arm64 image\n");
+    } else {
+        aputs("initrd: invalid embedded image\n");
+    }
     fselftest_report_t report;
     int rc = finte_selftest_run(2, &report);
 
@@ -165,6 +250,8 @@ void kmain_arm64(uint64_t boot_arg, uint64_t magic)
                          (unsigned)report.checks,
                          (unsigned)report.failures);
     hal_console_write(buf, (size_t)n);
+
+    arm64_disk_check();
 
     extern int gic_version(void);
     fcpu_t *cpu0 = hal_cpu_slot(0);
@@ -211,5 +298,19 @@ void kmain_arm64(uint64_t boot_arg, uint64_t magic)
         hal_console_write(buf, (size_t)n);
     }
 
-    hal_exit(rc == 0 ? 0 : 1);
+    hal_timer_start_cpu();
+    hal_irq_enable();
+
+    int urc = finte_usermode_run("init.elf");
+    n = finte_format(buf, sizeof(buf), "arm64 user: init.elf %s\n",
+                     urc == 0 ? "PASS" : "FAIL");
+    hal_console_write(buf, (size_t)n);
+
+    int prc = finte_proc_demo();
+    n = finte_format(buf, sizeof(buf), "arm64 procs: %s\n",
+                     prc == 0 ? "PASS" : "FAIL");
+    hal_console_write(buf, (size_t)n);
+
+    hal_irq_disable();
+    hal_exit((rc == 0 && urc == 0 && prc == 0) ? 0 : 1);
 }

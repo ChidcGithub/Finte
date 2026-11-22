@@ -49,6 +49,11 @@ extern int arm64_smp_init(void);
 extern void gic_init(void);
 extern void gic_init_cpu(void);
 extern int gic_version(void);
+extern void arm64_cache_clean(const void *start, size_t bytes);
+extern uint64_t arm64_mmu_ttbr0;
+extern uint64_t arm64_mmu_tcr;
+extern uint64_t arm64_mmu_mair;
+extern uint64_t arm64_mmu_sctlr;
 
 static inline uint64_t read_cntfrq(void)
 {
@@ -498,15 +503,28 @@ void arm64_ap_main(uint64_t index)
     cpu->timer_mode = FINTE_TIMER_ARCH;
     finte_memset(&g_sched_ctx[index], 0, sizeof(g_sched_ctx[index]));
     g_sched_ctx[index].impl = &g_sched_ctx[index];
+    g_sched_ctx[index].addr_space = arm64_mmu_ttbr0;
     g_active[index] = &g_sched_ctx[index];
     hal_cpu_install(cpu);
     gic_init_cpu();
+    hal_timer_start_cpu();
     hal_cpu_mark_online((uint32_t)index);
     finte_sched_ap_run();
 }
 
 int arm64_smp_init(void)
 {
+    /* Secondary CPUs enter with caches off and read their stack and the
+     * saved MMU state from memory. Clean both to the point of coherency. */
+    for (uint32_t i = 0; i < FINTE_MAX_CPUS; i++) {
+        arm64_cache_clean(arm64_ap_stacks[i], ARM64_AP_STACK_BYTES);
+    }
+    arm64_cache_clean(&arm64_mmu_ttbr0, sizeof(arm64_mmu_ttbr0));
+    arm64_cache_clean(&arm64_mmu_tcr, sizeof(arm64_mmu_tcr));
+    arm64_cache_clean(&arm64_mmu_mair, sizeof(arm64_mmu_mair));
+    arm64_cache_clean(&arm64_mmu_sctlr, sizeof(arm64_mmu_sctlr));
+    __asm__ volatile("dsb sy" : : : "memory");
+
     uint32_t started = 0;
     for (uint32_t i = 1; i < FINTE_MAX_CPUS; i++) {
         uint64_t rc = psci_call4(0x84000003ull, i,
@@ -549,40 +567,11 @@ void hal_fw_end(void)
 {
 }
 
-int hal_blk_count(void)
-{
-    return 0;
-}
-
-int hal_blk_info(int index, fblk_info_t *out)
-{
-    (void)index;
-    (void)out;
-    return -1;
-}
-
-int hal_blk_read(int index, uint64_t lba, void *buf, uint32_t sectors)
-{
-    (void)index;
-    (void)lba;
-    (void)buf;
-    (void)sectors;
-    return -1;
-}
-
-int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors)
-{
-    (void)index;
-    (void)lba;
-    (void)buf;
-    (void)sectors;
-    return -1;
-}
+extern void arm64_mmu_set_root(uint64_t root);
 
 static void arm64_set_addr_space(uint64_t root)
 {
-    __asm__ volatile("msr ttbr0_el1, %0; dsb ish; tlbi vmalle1; isb"
-                     : : "r"(root) : "memory");
+    arm64_mmu_set_root(root);
 }
 
 fhal_ctx_t *hal_ctx_self(void)
@@ -590,6 +579,9 @@ fhal_ctx_t *hal_ctx_self(void)
     uint32_t id = hal_cpu_self()->id;
     if (id >= FINTE_MAX_CPUS) {
         id = 0;
+    }
+    if (g_sched_ctx[id].addr_space == 0 && arm64_mmu_ttbr0 != 0) {
+        g_sched_ctx[id].addr_space = arm64_mmu_ttbr0;
     }
     return g_active[id] ? g_active[id] : &g_sched_ctx[id];
 }

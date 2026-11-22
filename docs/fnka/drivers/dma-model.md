@@ -19,7 +19,9 @@
   loader exits boot services, so only native AHCI DMA remains.
 - There is no IOMMU configuration, no DMA address-space abstraction and no
   user-space DMA buffer grant.
-- arm64 has no block driver or DMA path.
+- The arm64 virtio-mmio block driver passes physical descriptor/data addresses
+  to the device and polls for completion; it assumes QEMU's coherent DMA and
+  has no cache-maintenance or IOMMU path of its own.
 
 The current model is safe only because all DMA users are kernel-resident and
 use static buffers that are never freed or reused concurrently.

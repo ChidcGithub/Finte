@@ -53,16 +53,26 @@
 ## 2. Current arm64 model
 
 - `src/arch/arm64/entry.S` installs a 16-entry exception vector table in
-  `VBAR_EL1`; IRQ entries save a 288-byte frame and return through `eret`.
-- Synchronous exceptions report ESR/FAR/ELR/SPSR and panic. SVC/user mode is
-  not implemented.
+  `VBAR_EL1`; IRQ and sync entries save a 288-byte frame (including `SP_EL0`)
+  and return through `eret`.
+- Lower-EL AArch64 slots take SVC from EL0. `EC=0x15` dispatches the native
+  syscall table (`x8` number, `x0`–`x2` arguments) and returns in `x0` without
+  advancing ELR, because SVC's preferred return address is already the next
+  instruction.
+- EL0 data/instruction aborts, alignment faults and BRK call
+  `finte_user_fault()`, which kills the process; EL1 sync faults report
+  ESR/FAR/ELR/SPSR and panic.
+- Before PSCI `CPU_ON`, the BSP cleans page tables, MMU state and AP stacks to
+  the point of coherency; APs invalidate their I-cache after enabling the MMU.
 - `hal_irq_disable()` / `hal_irq_enable()` manipulate `DAIF`.
 - GICv2 at `0x08000000`/`0x08010000`: distributor/CPU interface init, SGI 0
   for reschedule IPIs, PPI 30 for the EL1 physical timer.
 - The generic timer runs at 100 Hz; the handler rearms `CNTP_TVAL_EL0`, EOIs,
   increments per-CPU ticks, calls `finte_sched_tick()` and may preempt.
 - PSCI over HVC covers `SYSTEM_OFF` and `CPU_ON`; APs initialize their GIC CPU
-  interface and join the per-CPU scheduler.
+  interface and timer, then join the per-CPU scheduler.
+- The arm64 virtio-mmio block path is polled; SPI delivery and a block IRQ
+  completion path are future work.
 - The UEFI loader calls `ExitBootServices` and disables interrupts before
   jumping; the kernel reinitializes GIC/timer state.
 
@@ -102,7 +112,8 @@ own controller discovery and configuration:
 
 ## 5. Current limitations
 
-- arm64 has no user-mode exception delivery, MSI framework or GICv3 support.
+- arm64 has no MSI framework or GICv3 support; its user-mode path covers SVC
+  and fault termination, not a full signal/exception ABI.
 - No user-space IRQ delivery.
 - No IRQ capabilities.
 - No MSI/MSI-X framework.
@@ -129,5 +140,8 @@ own controller discovery and configuration:
 - `smp`: AP startup, per-CPU timers and IPIs.
 - `make qemu-disk-test`: ATA/AHCI interrupt-driven or polled block I/O paths.
 - arm64 `make arm64-test` / `make arm64-uefi-test`: exception vectors, GICv2,
-  PPI 30 timer ticks, SGI IPIs, 4-CPU PSCI startup and per-CPU flow hits, in
-  addition to the 147 core checks.
+  PPI 30 timer ticks, SGI IPIs, 4-CPU PSCI startup, per-CPU flow hits, EL0
+  `svc #0` syscalls, the IPC/time/preemption `procs` demo and the expected
+  user-fault kill, in addition to the 147 core checks.
+- `make arm64-disk-test` / `make arm64-uefi-disk-test`: polled virtio-mmio
+  block I/O with lfc1/ext4/NTFS.

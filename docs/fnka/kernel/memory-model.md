@@ -1,8 +1,8 @@
 # Memory model
 
 > **Status:** Partial — a shared physical page manager consumes Boot Protocol
-> v1, x86_64 has paging and private user page tables, and arm64 has an identity
-> MMU. There is no demand paging, swap or general user VM on arm64.
+> v1, and both x86_64 and arm64 have private user page tables at 4–5 GiB.
+> There is no demand paging, swap, ASID allocator or general user `mmap`.
 >
 > **Normative for:** physical memory, virtual address spaces, kernel/user
 > layout, allocation and mapping ownership.
@@ -26,6 +26,8 @@ the boot code reserves the kernel, ramdisk/modules, boot info, descriptor
 arrays, ACPI/DTB, framebuffer and x86 page tables. `hal_pages_alloc(bytes)`
 rounds to 4 KiB, allocates zeroed pages from the PMM, and `hal_pages_free()`
 returns any allocated page count, including non-page-multiple caller sizes.
+With the PMM active, x86 flow stacks are freed through the same path; the
+static `g_free_stacks` cache is used only by the no-boot-info fallback.
 
 The old static heaps remain as fallback only:
 
@@ -81,7 +83,14 @@ static identity map with 2 MiB blocks:
 
 The kernel uses PMM-backed pages, a 32 KiB flow stack per `hal_ctx_create()`,
 16 KiB static AP stacks, and the same Arena/object pools as the shared core.
-There is no arm64 user address space or ASID allocator yet.
+
+Each arm64 process root copies the supervisor-only kernel L1 entries, replaces
+`L1[4]` with a private L2 table for the 4–5 GiB window, and allocates L3 tables
+on demand for 4 KiB user pages. The private root is loaded into `TTBR0_EL1` on
+context switch; the kernel remains mapped through the shared low identity map.
+Page tables and user pages are PMM-backed and tracked for `proc_destroy()`.
+There is no ASID allocator or TLB-shootdown protocol yet; switches use
+`tlbi vmalle1is`, and user pages are RWX.
 
 ## 4. Kernel heap and object pools
 
@@ -121,7 +130,8 @@ never treated as user pointers.
 
 - Kernel objects are reference counted through node handles.
 - A Flow owns its capability table; dropping the Flow drops its caps.
-- A process owns its page tables and mapped user pages; teardown releases them.
+- A process owns its page tables and mapped user pages; `proc_destroy()`
+  releases them. `finte_flow_exit()` does not release the address space itself.
 - An Arena owns its backing pages until the Arena is destroyed.
 - A Channel owns queued messages and their attached capability references.
 - There is no general user-accessible `mmap`/`munmap`; only the demo Arena map
@@ -156,8 +166,9 @@ The target contract requires:
 
 - PMM is a bitmap allocator with no per-page database, reclaim or swap.
 - PMM ranges are bounded: x86 to the 1 GiB identity map, arm64 to 4 GiB.
-- arm64 has an identity MMU but no user address space or ASID allocator.
-- No NX or read-only user mappings.
+- arm64 has an identity kernel map plus per-process user roots, but no ASID
+  allocator or TLB-shootdown protocol.
+- No NX or read-only user mappings on either architecture.
 - No demand paging or COW.
 - No general `mmap`/`munmap`.
 - No TLB shootdown protocol for user mappings.
@@ -186,8 +197,11 @@ The target contract requires:
 - `procs` / `services`: private page tables, shared page, Arena page caps,
   user copy validation and fault kill.
 - `make qemu-disk-test`: filesystem-backed reads and writes.
-- `make test`: PMM map consumption, allocation/free, reservation and clamping.
+- `make test`: PMM map consumption, allocation/free, reservation, clamping,
+  churn, fragmentation, double-free and exhaustion.
 - `make arm64-test`: MMU identity translations for kernel and device addresses,
-  GICv2 timer ticks, 4-CPU PSCI startup and per-CPU flow distribution.
+  GICv2 timer ticks, 4-CPU PSCI startup, per-CPU flow distribution, EL0 user
+  pages and the isolated `procs` demo.
 - `make arm64-uefi-test`: same checks plus PMM counts from the UEFI memory map.
-- No arm64 user mapping, TLB-shootdown or reclaim test yet.
+- `make arm64-disk-test`: virtio-mmio lfc1/ext4/NTFS reads (legacy + modern).
+- No arm64 `fork`/general `mmap`, TLB-shootdown or reclaim test yet.

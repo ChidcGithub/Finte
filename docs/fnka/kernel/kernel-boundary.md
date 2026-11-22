@@ -1,8 +1,8 @@
 # Kernel/user protection boundary
 
-> **Status:** Partial — x86_64 has ring-3 user processes and a syscall gate.
-> The kernel still contains all drivers and filesystems, and arm64 has no user
-> mode.
+> **Status:** Partial — x86_64 has ring-3 user processes and arm64 has EL0
+> processes, both with syscall entry and user-fault kill. The kernel still
+> contains all drivers and filesystems.
 >
 > **Normative for:** trust levels, what belongs in the kernel, how components
 > cross the boundary, and what the TCB currently contains.
@@ -65,9 +65,9 @@ and receiving resources through capabilities.
 | UEFI firmware Block I/O and ConIn | Not used by current loaders | Only available when a producer sets `fw_services` |
 | Disk manager and lfc1/ext4/NTFS | Level 0 | In-kernel |
 | Shell | Level 0 | In-kernel shell |
-| `init.elf` and `ipc.elf` | Level 2 | x86 ring-3 demo processes |
+| `init.elf` and `ipc.elf` | Level 2 | x86 ring-3 and arm64 EL0 demo processes |
 | Linux persona | Level 0 | In-kernel translation layer |
-| arm64 drivers/services | Level 0 | No user mode yet |
+| arm64 drivers/services | Level 0 | EL0 exists; no user-space driver framework yet |
 
 The current x86_64 and arm64 UEFI loaders call `ExitBootServices` and clear
 the firmware pointers. The kernel no longer relies on UEFI Block I/O or ConIn.
@@ -162,7 +162,8 @@ services, not the interrupt controller, timer or boot console.
 - The shell is in the kernel.
 - x86 UEFI has no native USB-HID keyboard driver; USB-only systems need one
   for a non-serial console.
-- arm64 has no user mode or user/kernel boundary.
+- arm64 has EL0 user mode and a syscall/fault boundary, but no user-space
+  driver or service framework.
 - There is no user-space driver framework or device manager.
 - The native syscall ABI is not stable.
 - The Linux persona executes in the kernel.

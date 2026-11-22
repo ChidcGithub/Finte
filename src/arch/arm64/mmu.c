@@ -48,6 +48,33 @@ static int is_ram(const fboot_info_t *bi, uint64_t base, uint64_t len)
                     ARM64_RAM_DEFAULT_END - ARM64_RAM_DEFAULT_BASE);
 }
 
+static uint32_t dcache_line(void)
+{
+    uint64_t ctr;
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    uint32_t line = 4u << ((ctr >> 16) & 0xFu);
+    return line ? line : 64u;
+}
+
+void arm64_cache_clean(const void *start, size_t bytes)
+{
+    if (!start || bytes == 0) {
+        return;
+    }
+    uint32_t line = dcache_line();
+    uint64_t s = (uint64_t)(uintptr_t)start & ~(uint64_t)(line - 1u);
+    uint64_t e = (uint64_t)(uintptr_t)start + bytes;
+    for (uint64_t p = s; p < e; p += line) {
+        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb ish" : : : "memory");
+}
+
+void arm64_icache_invalidate_all(void)
+{
+    __asm__ volatile("ic iallu; dsb nsh; isb" : : : "memory");
+}
+
 void arm64_mmu_init(const fboot_info_t *bi)
 {
     for (uint32_t i = 0; i < 512; i++) {
@@ -103,6 +130,14 @@ void arm64_mmu_init(const fboot_info_t *bi)
     uint64_t ttbr0 = (uint64_t)(uintptr_t)(use_48 ? g_l0 : g_l1);
     arm64_mmu_ttbr0 = ttbr0;
     arm64_mmu_tcr = tcr;
+    /* APs read these tables and values with caches off, so make the BSP's
+     * writes visible to the point of coherency before CPU_ON. */
+    arm64_cache_clean(g_l0, sizeof(g_l0));
+    arm64_cache_clean(g_l1, sizeof(g_l1));
+    arm64_cache_clean(g_l2, sizeof(g_l2));
+    arm64_cache_clean(&arm64_mmu_ttbr0, sizeof(arm64_mmu_ttbr0));
+    arm64_cache_clean(&arm64_mmu_tcr, sizeof(arm64_mmu_tcr));
+    arm64_cache_clean(&arm64_mmu_mair, sizeof(arm64_mmu_mair));
     __asm__ volatile("msr ttbr0_el1, %0" : : "r"(ttbr0) : "memory");
     __asm__ volatile("msr tcr_el1, %0" : : "r"(tcr) : "memory");
     __asm__ volatile("msr ttbr1_el1, xzr" : : : "memory");
@@ -115,7 +150,9 @@ void arm64_mmu_init(const fboot_info_t *bi)
     sctlr &= ~(1ull << 1);                              /* no alignment check */
     sctlr &= ~(1ull << 19);                             /* WXN off */
     arm64_mmu_sctlr = sctlr;
+    arm64_cache_clean(&arm64_mmu_sctlr, sizeof(arm64_mmu_sctlr));
     __asm__ volatile("msr sctlr_el1, %0; isb" : : "r"(sctlr) : "memory");
+    arm64_icache_invalidate_all();
     g_mmu_on = 1;
 }
 
@@ -127,4 +164,18 @@ int arm64_mmu_enabled(void)
 int arm64_mmu_va_bits(void)
 {
     return 64 - (int)(arm64_mmu_tcr & 0x3Full);
+}
+
+uint64_t *arm64_mmu_kernel_l1(void)
+{
+    return g_l1;
+}
+
+void arm64_mmu_set_root(uint64_t root)
+{
+    if (!root) {
+        return;
+    }
+    __asm__ volatile("msr ttbr0_el1, %0; dsb ish; tlbi vmalle1is; dsb ish; isb"
+                     : : "r"(root) : "memory");
 }

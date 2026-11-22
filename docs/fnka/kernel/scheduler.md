@@ -200,7 +200,7 @@ The first stage now dispatches **Threads**. The target adds:
 ## 13. Test evidence
 
 - `src/tests/test_main.c`: Flow/Thread split, queue, migration, Fuel and
-  throttle behavior (22 host tests).
+  throttle behavior (23 host tests).
 - `src/core/selftest.c`: scheduler checks.
 - `preempt`: timer preemption against a spinning Flow.
 - `smp`: per-CPU ticks, IPIs, switches, steals and migrations.

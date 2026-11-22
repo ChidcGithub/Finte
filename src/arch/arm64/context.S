@@ -15,11 +15,15 @@ arm64_switch:
     stp x29, x30, [sp, #80]
     mrs x9, daif
     str x9, [sp, #96]
+    mrs x9, sp_el0
+    str x9, [sp, #104]
     mov x9, sp
     str x9, [x0]
     mov sp, x1
     ldr x9, [sp, #96]
     msr daif, x9
+    ldr x9, [sp, #104]
+    msr sp_el0, x9
     ldp x29, x30, [sp, #80]
     ldp x27, x28, [sp, #64]
     ldp x25, x26, [sp, #48]

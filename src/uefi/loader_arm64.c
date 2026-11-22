@@ -192,13 +192,27 @@ static int open_kernel(EFI_SYSTEM_TABLE *st, EFI_HANDLE image,
 
 static void sync_instruction_cache(uint64_t start, uint64_t end)
 {
+    uint64_t ctr;
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    uint64_t dline = 4ull << ((ctr >> 16) & 0xFull);
+    uint64_t iline = 4ull << (ctr & 0xFull);
+    if (dline == 0) {
+        dline = 64;
+    }
+    if (iline == 0) {
+        iline = 64;
+    }
     uint64_t p;
-    for (p = start & ~63ull; p < end; p += 64) {
+    for (p = start & ~(dline - 1u); p < end; p += dline) {
         __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
     }
     __asm__ volatile("dsb ish" : : : "memory");
-    for (p = start & ~63ull; p < end; p += 64) {
-        __asm__ volatile("ic ivau, %0" : : "r"(p) : "memory");
+    if (ctr & (1ull << 29)) { /* DIC: no per-line I-cache maintenance */
+        __asm__ volatile("ic iallu" : : : "memory");
+    } else {
+        for (p = start & ~(iline - 1u); p < end; p += iline) {
+            __asm__ volatile("ic ivau, %0" : : "r"(p) : "memory");
+        }
     }
     __asm__ volatile("dsb ish\n\tisb" : : : "memory");
 }

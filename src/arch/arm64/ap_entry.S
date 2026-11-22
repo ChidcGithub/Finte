@@ -35,6 +35,9 @@ arm64_ap_entry:
     ldr x1, [x1]
     msr sctlr_el1, x1
     isb
+    ic iallu
+    dsb nsh
+    isb
 
     mov x0, x19
     bl arm64_ap_main

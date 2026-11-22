@@ -769,6 +769,67 @@ static void test_pmm(void)
     CHECK(pmm_active() == 0);
 }
 
+static void test_pmm_churn(void)
+{
+    fboot_mmap_entry_t map[2];
+    finte_memset(map, 0, sizeof(map));
+    map[0].base = 0x100000;
+    map[0].length = 0x8000; /* 8 pages */
+    map[0].type = FINTE_BOOT_MMAP_USABLE;
+    map[1].base = 0x10C000;
+    map[1].length = 0x4000; /* 4 pages; 0x108000-0x10C000 stays reserved */
+    map[1].type = FINTE_BOOT_MMAP_USABLE;
+
+    fboot_info_t bi;
+    finte_memset(&bi, 0, sizeof(bi));
+    bi.flags = FINTE_BOOT_FLAG_MEMMAP;
+    bi.memmap_addr = (uint64_t)(uintptr_t)map;
+    bi.memmap_count = 2;
+    bi.memmap_desc_size = sizeof(map[0]);
+
+    CHECK(pmm_init(&bi, 0x100000, 0x110000) == 0);
+    CHECK(pmm_free_page_count() == 12);
+
+    uint64_t a = pmm_alloc_pages(4);
+    CHECK(a == 0x100000);
+    CHECK(pmm_free_page_count() == 8);
+    CHECK(pmm_alloc_pages(9) == 0);
+    uint64_t b = pmm_alloc_pages(4);
+    CHECK(b == 0x104000);
+    CHECK(pmm_free_page_count() == 4);
+    uint64_t c = pmm_alloc_pages(1);
+    CHECK(c == 0x10C000);
+    CHECK(pmm_free_page_count() == 3);
+
+    pmm_free_pages(c, 1);
+    CHECK(pmm_free_page_count() == 4);
+    pmm_free_pages(c, 1);
+    CHECK(pmm_free_page_count() == 4);
+
+    pmm_free_pages(b, 4);
+    CHECK(pmm_free_page_count() == 8);
+    CHECK(pmm_reserve(a, 4 * 4096) == 0);
+    pmm_free_pages(a, 4);
+    CHECK(pmm_free_page_count() == 8);
+
+    uint64_t got[16];
+    uint32_t n = 0;
+    while (n < 16 && (got[n] = pmm_alloc_pages(1)) != 0) {
+        n++;
+    }
+    CHECK(n == 8);
+    CHECK(pmm_free_page_count() == 0);
+    CHECK(pmm_alloc_pages(1) == 0);
+    for (uint32_t i = 0; i < n; i++) {
+        pmm_free_pages(got[i], 1);
+    }
+    CHECK(pmm_free_page_count() == 8);
+    CHECK(pmm_alloc_pages(0) == 0);
+    CHECK(pmm_alloc_pages(pmm_total_pages() + 1) == 0);
+    CHECK(pmm_init(NULL, 0, 0) != 0);
+    CHECK(pmm_active() == 0);
+}
+
 static void test_boot_protocol(void)
 {
     fboot_info_t bi;
@@ -850,6 +911,7 @@ static const struct testcase g_tests[] = {
     { "status text", test_status_text },
     { "boot protocol", test_boot_protocol },
     { "physical memory manager", test_pmm },
+    { "PMM churn and fragmentation", test_pmm_churn },
     { "formatter", test_format },
 };
 

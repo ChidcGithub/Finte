@@ -129,6 +129,7 @@ void finte_kernel_post(uint64_t boot_arg, uint64_t magic)
         heap_ok = heap_ok && *(uint64_t *)p == 0xF17E5EEDull;
     }
     post_check("heap", heap_ok, "page aligned, writable");
+    hal_pages_free(p, 4096);
 
     post_print("[post] tsc: %llu Hz\n",
                (unsigned long long)hal_cycles_per_sec());

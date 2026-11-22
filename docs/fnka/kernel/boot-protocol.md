@@ -160,8 +160,8 @@ entry. It is available for future allocator integration.
 
 ## 6. Current limitations
 
-- The x86 kernel still uses a fixed 1 GiB identity map and static heap; it does
-  not consume the memory map to build a physical allocator yet.
+- The x86 kernel still uses a fixed 1 GiB identity map, so the PMM only hands
+  out pages inside that window; the static heap remains the no-map fallback.
 - The arm64 kernel does not parse the DTB or ACPI tables yet.
 - The x86 UEFI path no longer has firmware ConIn; USB-only keyboards need a
   future native HID driver.
@@ -175,10 +175,14 @@ entry. It is available for future allocator integration.
 
 - `src/tests/test_main.c`: `boot protocol` validates a good structure, rejects
   bad magic/version/map entries and checks usable-range lookup.
-- `make test`: 22 host tests pass.
+- `make test`: 23 host tests pass.
 - `make qemu-test`: x86 BIOS, E820 map, ramdisk module, 147 checks.
 - `make qemu-uefi-test`: x86 UEFI, memory map, modules, `fw=0`, 147 checks.
 - `make qemu-uefi-disk-test`: AHCI after `ExitBootServices`.
-- `make arm64-test`: direct ELF boot without a boot structure.
-- arm64 AAVMF ISO/IMG: protocol v1, memory map, ACPI pointer, 147 checks.
-- x86_64 BIOS/UEFI ISO and arm64 ISO/IMG boot checks pass locally.
+- `make arm64-test`: direct ELF boot without a boot structure; embedded arm64
+  initrd, MMU/timer/SMP probes, EL0 `init.elf`, the `procs` demo and 147 core
+  checks.
+- arm64 AAVMF ISO/IMG: protocol v1, memory map, ACPI pointer, PMM counts,
+  MMU/GIC/timer/SMP, EL0 user/procs and 147 checks.
+- x86_64 BIOS/UEFI ISO and arm64 ISO/IMG boot checks pass locally; arm64 also
+  boots the virtio disk-test image in legacy, modern and UEFI modes.

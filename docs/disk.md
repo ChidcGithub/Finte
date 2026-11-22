@@ -97,15 +97,17 @@ block on disk probing.
 | BIOS / SeaBIOS | ATA PIO | primary/secondary, master/slave; LBA28 and LBA48; up to 4 drives |
 | UEFI / q35 | AHCI DMA | PCI class `0x010601`; SATA disks; up to 8 devices |
 | UEFI firmware | Block I/O protocol | Only if `fw_services`; inactive for current loaders |
+| arm64 QEMU `virt` | virtio-mmio block | Legacy v1 and modern v2 transports, polled, 512-byte sectors; scans 32 slots at `0x0A000000` |
 | Host simulator | raw image files | `finte disk <image> ...` and the test scripts |
 
 BIOS builds identity-map the first 1 GiB, so AHCI BARs above that range are not
 probed there. AHCI is used on the UEFI path, which keeps OVMF's mappings.
 
-Firmware block devices are appended after native ATA/AHCI devices only when the
-boot producer sets `fw_services`. Current x86 and arm64 UEFI loaders exit boot
-services and clear it, so the runtime uses native ATA/AHCI. The firmware Block
-I/O path remains for a future producer that keeps firmware services.
+Firmware block devices are appended after native ATA/AHCI and virtio-mmio
+devices only when the boot producer sets `fw_services`. Current x86 and arm64
+UEFI loaders exit boot services and clear it, so the runtime uses native
+ATA/AHCI on x86 and virtio-mmio on arm64. The firmware Block I/O path remains
+for a future producer that keeps firmware services.
 
 Firmware calls would require the firmware IDT and interrupts, while the kernel
 runs on its own IDT. `hal_fw_begin()` / `hal_fw_end()` temporarily switch IDTs,
@@ -303,6 +305,8 @@ Backslashes in paths are normalized to `/`. A partition argument may be
 make disk-test             # host: build three partitions, read all
 make qemu-disk-test        # BIOS/ATA + MBR + lfc1/ext4/NTFS
 make qemu-uefi-disk-test   # UEFI/AHCI + MBR + lfc1/ext4/NTFS
+make arm64-disk-test       # arm64 virtio-mmio legacy + modern, three filesystems
+make arm64-uefi-disk-test  # arm64 UEFI ISO + virtio-mmio test disk
 ```
 
 Writable lfc1 is exercised by the shell tests: create, write, mkdir, cp, sync,
@@ -328,6 +332,8 @@ partitions and deterministic file contents. A GPT image can be made with
 - Every sync appends a full tree; compact with `tools/lfc1ck.py --compact`.
 - NVMe and USB storage require native drivers; the current UEFI loaders exit
   boot services, so firmware Block I/O is unavailable. BIOS has ATA PIO only.
+- The arm64 virtio-mmio driver is polled, uses one queue and assumes QEMU's
+  coherent DMA; there is no block IRQ or generic DMA framework yet.
 - The mount table is prefix-based; there is no VFS inode cache, page cache or
   concurrent writer protocol.
 - NTFS attribute lists and ext4 journal recovery are not implemented.

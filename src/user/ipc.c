@@ -5,6 +5,7 @@
  * checks shared memory and sleeps. PID 3 busy-spins while PID 4 wakes from
  * sleeps and updates a shared heartbeat, proving timer preemption. */
 #include <stdint.h>
+#include "syscall.h"
 
 #define SYS_WRITE 1
 #define SYS_GETPID 39
@@ -42,26 +43,12 @@ static volatile uint64_t sink;
 
 static long sys1(long nr, long a)
 {
-    register long rax __asm__("rax") = nr;
-    register long rdi __asm__("rdi") = a;
-    __asm__ volatile("int $0x80"
-                     : "+r"(rax)
-                     : "r"(rdi)
-                     : "memory");
-    return rax;
+    return fuser_syscall(nr, a, 0, 0);
 }
 
 static long sys3(long nr, long a, long b, long c)
 {
-    register long rax __asm__("rax") = nr;
-    register long rdi __asm__("rdi") = a;
-    register long rsi __asm__("rsi") = b;
-    register long rdx __asm__("rdx") = c;
-    __asm__ volatile("int $0x80"
-                     : "+r"(rax)
-                     : "r"(rdi), "r"(rsi), "r"(rdx)
-                     : "memory");
-    return rax;
+    return fuser_syscall(nr, a, b, c);
 }
 
 static void print(const char *s)

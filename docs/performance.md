@@ -61,9 +61,10 @@ The Windows fiber path is much faster for channel switching (223 ns vs 734 ns) a
 - `build/finte.img`: **68,157,440 bytes** hybrid BIOS+UEFI USB image (64 MiB FAT32 ESP).
 - `build/initrd.bin`: **12,816 bytes** with `init.elf` and `ipc.elf`.
 - `build/init.elf`: **5,088 bytes** · `build/ipc.elf`: **7,040 bytes**.
-- 32 MiB static bump heap in `.bss`, cleared at boot.
+- 32 MiB static heap in `.bss` as the no-boot-map fallback; PMM-backed pages
+  on normal boots.
 - Static core tables: 512 nodes, 64 flows, 64 channels, 16 arenas, 64 files, 8 dirs.
-- 32 KiB stack per flow, allocated from the kernel heap.
+- 32 KiB stack per flow, PMM-backed when active; static stack cache fallback.
 - 32 KiB boot stack in `.bss.stack`.
 
 The QEMU boot tests drive the CLI over serial on both BIOS/SeaBIOS and

@@ -24,6 +24,9 @@ _start:
     str xzr, [x1], #8
     b 1b
 2:
+    ic iallu
+    dsb nsh
+    isb
     mov x0, x19
     mov x1, x20
     bl kmain_arm64
@@ -96,6 +99,8 @@ vector_table:
     str x9, [sp, #264]
     mrs x9, far_el1
     str x9, [sp, #272]
+    mrs x9, sp_el0
+    str x9, [sp, #280]
 .endm
 
 .macro RESTORE_FRAME
@@ -103,6 +108,8 @@ vector_table:
     msr elr_el1, x9
     ldr x9, [sp, #256]
     msr spsr_el1, x9
+    ldr x9, [sp, #280]
+    msr sp_el0, x9
     ldp x0, x1, [sp, #0]
     ldp x2, x3, [sp, #16]
     ldp x4, x5, [sp, #32]
@@ -133,6 +140,4 @@ arm64_sync_entry:
     SAVE_FRAME
     mov x0, sp
     bl arm64_sync_handler
-1:
-    wfi
-    b 1b
+    RESTORE_FRAME

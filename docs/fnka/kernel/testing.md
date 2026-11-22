@@ -27,24 +27,26 @@ a named platform.
 | Level | Purpose | Current examples |
 | --- | --- | --- |
 | Compile-time | Types, warnings, architecture builds | `make all`, `make images`, `build-win.bat` |
-| Unit tests | Objects, caps, queues, allocators, boot protocol, PMM | `make test` (22 host tests) |
+| Unit tests | Objects, caps, queues, allocators, boot protocol, PMM | `make test` (23 host tests) |
 | Kernel self-tests | Controlled kernel environment | 147 checks, 6 sections |
 | QEMU boot tests | Startup, shell, exceptions, timers | `make qemu-test`, `make qemu-uefi-test` |
 | Integration tests | Userland, IPC, storage, drivers | `make qemu-disk-test`, `procs`, `services` |
-| Stress tests | Concurrency, allocation pressure, repeated teardown | partial; no dedicated suite |
+| Stress tests | Concurrency, allocation pressure, repeated teardown | PMM churn/fragmentation host test; no SMP allocator stress suite |
 | Hardware qualification | Selected physical systems | not started |
 
 ## 3. Current commands
 
 ```bash
-make test                 # 22 host tests
+make test                 # 23 host tests
 make selfcheck            # 147 core checks on the host
 make qemu-test            # BIOS boot and CLI checks
 make qemu-uefi-test       # UEFI/OVMF boot and CLI checks
 make qemu-disk-test       # BIOS + ATA PIO + lfc1/ext4/NTFS
 make qemu-uefi-disk-test  # UEFI + AHCI + filesystems
-make arm64-test           # arm64 QEMU virt, 4 CPUs: MMU/timer/SMP + 147 core checks
+make arm64-test           # arm64 4 CPUs: MMU/timer/SMP + EL0 user/procs + core checks
 make arm64-uefi-test      # same arm64 platform checks under AAVMF
+make arm64-disk-test      # arm64 virtio-mmio legacy + modern lfc1/ext4/NTFS
+make arm64-uefi-disk-test # arm64 UEFI virtio disk boot under AAVMF
 make images               # x86_64 and arm64 IMG/ISO release media
 ```
 
@@ -67,8 +69,8 @@ matrix.
 | Boot protocol v1 | Passing | Passing | E820/UEFI map, ACPI/DTB, modules, validator |
 | Core self-tests | Passing (147) | Passing (147) | Same core suite |
 | Physical allocator | Passing | Passing | Shared PMM from boot map; static-heap fallback |
-| Virtual memory | Partial | Partial | x86 user VM; arm64 identity MMU |
-| Exception handling | Passing | Partial | arm64 IRQ returns; sync faults panic |
+| Virtual memory | Partial | Partial | x86 user VM; arm64 identity kernel + per-process user roots |
+| Exception handling | Passing | Passing | arm64 user faults, IRQ and SVC return; EL1 sync panics |
 | Interrupt dispatch | Passing | Passing | x86 IDT/APIC; arm64 GICv2 |
 | Timer operation | Passing | Passing | x86 PIT/LAPIC; arm64 PPI 30 at 100 Hz |
 | SMP startup | Passing | Passing | x86 and arm64 up to 8 CPUs; 4-CPU tests |
@@ -77,14 +79,17 @@ matrix.
 | Thread execution entity | Passing | Passing | Internal one-per-Flow Thread; host split test |
 | Capability validation | Passing | Passing | Core checks |
 | Channel behavior | Passing | Passing | Core checks |
-| Arena mapping | Passing | Partial | x86 user map only |
-| User-mode transition | Passing | Missing | x86 ring 3 only |
-| ISO/IMG boot | Passing | Passing | Local checks |
+| Arena mapping | Passing | Passing | Page-scoped arena caps on both user demos |
+| User-mode transition | Passing | Passing | x86 ring 3 `int 0x80`; arm64 EL0 `svc #0` (demo ABI) |
+| Block storage | Passing | Passing | x86 ATA/AHCI; arm64 virtio-mmio legacy + modern |
+| ISO/IMG boot | Passing | Passing | Local checks and CI arm64 targets |
 
 ## 5. Current coverage gaps
 
-- No arm64 sync-exception recovery, user-mode fault policy or GICv3 test.
-- No arm64 user mode or syscall tests.
+- No arm64 GICv3, ACPI/DTB or physical-hardware test.
+- No arm64 `fork`/`exec`/general `mmap`, ASID/TLB-shootdown or user-page
+  permission test; the EL0 demo covers the native syscall subset.
+- No virtio IRQ or queue-stress test; the arm64 block driver is polled.
 - No work-stealing stress test; stealing is disabled.
 - No multi-Thread or Parallel Flow test.
 - No transitive revocation test.

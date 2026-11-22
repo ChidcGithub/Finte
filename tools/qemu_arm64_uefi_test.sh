@@ -28,7 +28,9 @@ for pat in \
     'mmu: identity translations ok' \
     'arm64 timer: gic=v2 ticks=' \
     'arm64 smp: 3 application processor(s) online, 4 cpu(s) total' \
-    'arm64 smp: hits=2/2/2/2'; do
+    'arm64 smp: hits=2/2/2/2' \
+    'arm64 user: init.elf PASS' \
+    'arm64 procs: PASS'; do
     if ! grep -q "$pat" "$LOG"; then
         echo "missing: $pat"
         ok=0
@@ -40,6 +42,10 @@ if ! grep -Eq 'mmu: (39|48)-bit identity map enabled' "$LOG"; then
 fi
 if ! grep -Eq 'arm64 timer: gic=v2 ticks=[1-9]' "$LOG"; then
     echo "missing: nonzero timer ticks"
+    ok=0
+fi
+if ! grep -Fq 'procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK' "$LOG"; then
+    echo "missing: full procs demo"
     ok=0
 fi
 

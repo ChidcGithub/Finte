@@ -15,7 +15,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld gcc-aarch64-linux-gnu \
-            qemu-system-arm qemu-efi-aarch64
+            qemu-system-arm qemu-efi-aarch64 e2fsprogs ntfs-3g
       - name: Build images
         run: make images
       - name: Run host and core checks
@@ -26,6 +26,10 @@ jobs:
         run: make arm64-test
       - name: Run arm64 UEFI test
         run: make arm64-uefi-test
+      - name: Run arm64 virtio disk test
+        run: make arm64-disk-test
+      - name: Run arm64 UEFI disk test
+        run: make arm64-uefi-disk-test
       - uses: actions/upload-artifact@v4
         with:
           name: finte-images

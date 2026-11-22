@@ -695,6 +695,7 @@ int finte_usermode_run(const char *name)
         return FINTE_ERR_STATE;
     }
     proc_begin();
+    uint64_t pm0 = pmm_active() ? pmm_free_page_count() : 0;
     fproc_t *p = proc_create("user", name, 1, 0, 0, 0, 0, 0, 0, 0);
     if (!p) {
         return FINTE_ERR_NOMEM;
@@ -708,6 +709,16 @@ int finte_usermode_run(const char *name)
     write_cr3(g_kernel_cr3);
     int status = g_user_faults ? FINTE_ERR_FAULT : finte_run_status();
     proc_destroy(p);
+    uint64_t pm1 = pmm_active() ? pmm_free_page_count() : 0;
+    if (pmm_active() && pm1 != pm0) {
+        char buf[96];
+        int n = finte_format(buf, sizeof(buf),
+                             "[user] pmm free %llu -> %llu\n",
+                             (unsigned long long)pm0,
+                             (unsigned long long)pm1);
+        hal_console_write(buf, (size_t)n);
+        status = FINTE_ERR_STATE;
+    }
     return status;
 }
 
@@ -717,6 +728,7 @@ int finte_proc_demo(void)
         return FINTE_ERR_STATE;
     }
     proc_begin();
+    uint64_t pm0 = pmm_active() ? pmm_free_page_count() : 0;
 
     fhandle_t chan = finte_channel_create("proc-ipc", 4);
     if (!finte_handle_valid(chan)) {
@@ -810,5 +822,22 @@ out:
     finte_node_unref(arena);
     hal_pages_free(shm, 4096);
     finte_node_unref(chan);
+
+    uint64_t pm1 = pmm_active() ? pmm_free_page_count() : 0;
+    if (pmm_active() && pm1 != pm0) {
+        char buf[128];
+        int n = finte_format(buf, sizeof(buf),
+                             "[procs] pmm free %llu -> %llu\n",
+                             (unsigned long long)pm0,
+                             (unsigned long long)pm1);
+        hal_console_write(buf, (size_t)n);
+        result = FINTE_ERR_STATE;
+    } else if (pmm_active()) {
+        char buf[96];
+        int n = finte_format(buf, sizeof(buf),
+                             "[procs] pmm free stable=%llu\n",
+                             (unsigned long long)pm1);
+        hal_console_write(buf, (size_t)n);
+    }
     return result;
 }

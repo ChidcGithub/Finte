@@ -20,7 +20,7 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 
 ## Status
 
-- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 22 self-tests passing on Linux/WSL and Windows.
+- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 23 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, PE32+ UEFI loaders for x86_64 and arm64, and FAT ESPs. `make images` produces x86_64 BIOS/UEFI hybrid media and arm64 UEFI ISO/IMG media.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
@@ -34,12 +34,12 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 - **Boot logo and visible shutdown**: the shell prints a cyan `Finte` ASCII logo after POST. `shutdown` walks through a staged checklist — shell, idle CPUs, disk flush, timer preemption, interrupts — with short pauses, then powers off.
 - **Native CAS**: `cas` parses polynomial expressions with exact rational coefficients and simplifies, differentiates (`cas diff`) or evaluates (`cas eval`) them entirely in the kernel — no external tools, no floating point.
 - **Startup performance**: the GOP console draws glyphs with packed 64-bit stores and skips clearing rows that are already blank. With serial disabled, the BIOS path reaches the shell in about 0.8 seconds; UEFI wall time is dominated by OVMF firmware.
-- **Isolated user processes**: `user`, `procs` and `services` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code, data and page-scoped arena window; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, page-level arena caps, and process-kill on a kernel-memory fault.
+- **Isolated user processes**: `user`, `procs` and `services` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code, data and page-scoped arena window; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, page-level arena caps, and process-kill on a kernel-memory fault. The same demo now runs on x86_64 ring 3 (`int 0x80`) and arm64 EL0 (`svc #0`).
 - **3-strike watchdog**: unexpected user faults, scheduler deadlocks and disk-sync failures add a strike. On the third, the kernel prints a red panic and powers off. `selfcheck` and the expected `procs` fault are excluded. `watchdog` shows the state, `watchdog test` injects a strike, and `watchdog reset` clears it.
-- **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; the arm64 QEMU `virt` backend now has MMU/page tables, exception vectors, GICv2, the generic timer IRQ, PSCI CPU_ON, per-CPU state and the shared scheduler. `make arm64-test` runs 4 CPUs, the 147 core checks, MMU/timer/SMP probes, and per-CPU flow distribution. `make arm64-uefi-test` runs the same platform checks under AAVMF.
+- **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; the arm64 QEMU `virt` backend has MMU/page tables, exception vectors, GICv2, the generic timer IRQ, PSCI CPU_ON, per-CPU state, EL0 processes with `svc #0`, and a legacy/modern virtio-mmio block driver. `make arm64-test` runs 4 CPUs, the 147 core checks, MMU/timer/SMP probes, per-CPU flow distribution, `init.elf` at EL0 and the full `procs` IPC demo. `make arm64-uefi-test` runs the same platform checks under AAVMF; `make arm64-disk-test` and `make arm64-uefi-disk-test` mount lfc1/ext4/NTFS over virtio.
 - **Ring 3 / ELF64**: `user` loads `init.elf` from the initrd as an isolated process, enters CPL3 through a GDT/TSS and `int 0x80` gate, and returns to the shell when the process exits.
 - **Boot Protocol v1**: x86 BIOS, x86 UEFI and arm64 UEFI produce one validated structure with kernel/ramdisk, E820 or UEFI memory map, ACPI/DTB, modules and framebuffer. Both UEFI loaders call `ExitBootServices`; the kernel no longer uses firmware Block I/O or ConIn.
-- **Physical page allocator**: PMM consumes the v1 memory map, reserves the kernel, ramdisk/modules, boot info, descriptor arrays, ACPI/DTB, framebuffer and page tables, and backs `hal_pages_alloc/free`. The x86 static heap remains only as a no-boot-info fallback; arm64 uses PMM on UEFI, with the static heap as the `-kernel` fallback.
+- **Physical page allocator**: PMM consumes the v1 memory map, reserves the kernel, ramdisk/modules, boot info, descriptor arrays, ACPI/DTB, framebuffer and page tables, and backs `hal_pages_alloc/free`. Flow stacks and process page tables return to the PMM on teardown; the static heaps and stack caches remain only as a no-boot-info fallback. `make test` includes a churn/fragmentation suite.
 - Runs the **same producer/transform/sink pipeline** in the host simulator and on the metal image.
 - Runs the **Linux x86_64 persona** in both environments.
 - Native Windows host build uses Win32 fibers; Linux uses `ucontext`.
@@ -72,7 +72,7 @@ make image          # hybrid BIOS + UEFI USB image
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
 make user           # build init.elf + ipc.elf (packed into the initrd)
-make test           # 22 extended core self-tests
+make test           # 23 extended core self-tests
 make selfcheck      # startup POST/self-check suite
 make qemu           # BIOS boot, serial console (4 CPUs by default)
 make qemu-uefi      # UEFI/OVMF boot, serial console
@@ -85,8 +85,10 @@ make demo           # host-side native pipeline
 make compat         # host-side Linux persona
 make bench          # host microbenchmarks
 make arm64          # arm64 QEMU virt kernel (build/finte-arm64.elf)
-make arm64-test     # 4-CPU MMU/timer/SMP checks + 147 core checks
+make arm64-test     # 4-CPU MMU/timer/SMP + EL0 user/procs + 147 core checks
 make arm64-uefi-test # same platform checks through AAVMF
+make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
+make arm64-uefi-disk-test # arm64 UEFI disk boot through AAVMF
 make qemu-arm64     # interactive 4-CPU arm64 serial console
 python3 tools/lfc1ck.py build/disk-test.img --list
 ```
@@ -458,12 +460,12 @@ The performance argument is structural: handles are direct indexes, capability c
   ConIn is unavailable after `ExitBootServices`; USB-HID needs a native driver.
 - CLI shell with ramdisk access, writable lfc1 filesystems, line editing,
   history, completion and diagnostic commands.
-- Disk manager over ATA PIO and AHCI. Firmware Block I/O remains only for a
-  producer that keeps `fw_services`; current loaders exit boot services, so
-  NVMe/USB storage needs native drivers,
-  with MBR/GPT parsing, an 8-entry read cache, an append-only lfc1 v2 writer,
-  host-side `lfc1ck.py` validation/compaction, and capability-backed file
-  handles.
+- Disk manager over ATA PIO and AHCI on x86_64, and virtio-mmio on arm64
+  (legacy version 1 and modern version 2 transports, polled). Firmware Block
+  I/O remains only for a producer that keeps `fw_services`; current loaders
+  exit boot services, so NVMe/USB storage needs native drivers, with MBR/GPT
+  parsing, an 8-entry read cache, an append-only lfc1 v2 writer, host-side
+  `lfc1ck.py` validation/compaction, and capability-backed file handles.
 - Node table with generation-checked handles and refcounts.
 - Capability install/drop/dup/grant and cap transfer in messages.
 - Channels with bounded rings, blocking send/receive, backpressure, close/EOF.
@@ -475,12 +477,17 @@ The performance argument is structural: handles are direct indexes, capability c
 - Flow wait/join with a `CONTROL` capability.
 - Ring-3 ELF64 entry, GDT/TSS, per-process page tables, user-mode IPC and
   time syscalls, an `int 0x80` gate, and process-kill on user faults.
+- arm64 EL0 entry, per-process L0/L1/L2/L3 tables, TTBR0 switching, `svc #0`
+  syscalls, the same IPC/shared-page/arena/time demo, and process-kill on
+  user faults. The arm64 initrd is embedded in the kernel image.
+- Embedded arm64 initrd with `init.elf` and `ipc.elf`, built for
+  `EM_AARCH64`; the UEFI loader needs no separate ramdisk module.
 - Linux x86_64 persona subset and RAMFS.
 - Host simulator on Linux (ucontext) and Windows (fibers).
 - Startup POST (9 POST checks) and 147 core checks in the kernel.
-- 22 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
-  writable-lfc1 persistence, timer-preemption, boot protocol v1 and ring-3
-  tests.
+- 23 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
+  writable-lfc1 persistence, timer-preemption, boot protocol v1, ring-3 tests,
+  arm64 EL0 user/procs tests, and arm64 virtio disk tests.
 
 **Deliberately not here yet**
 
@@ -488,9 +495,10 @@ The performance argument is structural: handles are direct indexes, capability c
   isolation, user faults, message passing, a shared page and `time`/`sleep` are
   in place. There is still no `fork`, `exec`, signal delivery, per-process file
   descriptor table, general `mmap`, or user-to-user capability transfer.
-- **Per-CPU process teardown.** Per-CPU TSS/GDT is in place and user processes
-  can run on APs, but the frame allocator is still a bump allocator, so process
-  teardown does not return all pages yet.
+- **Flow-owned address spaces.** `proc_destroy()` returns process page tables
+  and user pages to the PMM, and flow stacks are freed when the PMM is active,
+  but teardown is still caller-driven after `finte_run()`; `finte_flow_exit()`
+  does not itself release a process address space.
 - **Fine-grained SMP scalability.** Up to 8 CPUs are started, but flows keep a
   static default affinity, verbs take one global core lock, and work stealing
   is currently disabled. `finte_sched_migrate()` can move flows between CPUs;
