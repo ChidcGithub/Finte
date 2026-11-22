@@ -84,7 +84,7 @@ ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
         disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
         arm64 arm64-test arm64-uefi-test arm64-disk-test arm64-uefi-disk-test \
-        abi-test qemu-arm64 images iso
+        abi-test qemu-arm64 images iso vmware
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
@@ -187,6 +187,9 @@ image: $(BUILD)/finte.img
 
 images: $(BUILD)/finte-x86_64.img $(BUILD)/finte-x86_64.iso \
         $(BUILD)/finte-arm64.img $(BUILD)/finte-arm64.iso
+
+vmware: images
+	bash tools/mkvmware.sh
 
 iso: $(BUILD)/finte-x86_64.iso $(BUILD)/finte-arm64.iso
 

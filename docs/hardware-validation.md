@@ -14,6 +14,16 @@ x86_64). For arm64, write `build/finte-arm64.img`; current arm64 physical boot
 still needs platform DTB support, so validated targets are x86_64 laptops and
 desktops with AHCI/ATA storage and legacy or UEFI serial/PS2 input.
 
+For VMware, build a ready-to-open bundle:
+
+```sh
+make vmware
+```
+
+Open `build/vmware/Finte-UEFI.vmx` (UEFI ISO) or
+`build/vmware/Finte-BIOS.vmx` (legacy BIOS + VMDK). Both reach the shell, and
+`serial.log` beside the VMX captures the run.
+
 ## On-device run
 
 At the `finte>` prompt:
