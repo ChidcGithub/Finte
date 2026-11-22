@@ -2,6 +2,21 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-22 — first-stage Flow/Thread split
+- Added `fthread_t`; each Flow owns one primary Thread.
+- Scheduler queues, sleep/throttle lists, channel wait lists and migration now
+  operate on Threads.
+- Fuel, capabilities, Channels, Arenas and persona remain on the Flow.
+- Added the `flow/thread split` host test; suite is now 20 tests.
+- User-visible Threads and Parallel Flows remain deferred.
+
+## 2026-11-22 — FNKA contract set
+- Added `docs/fnka/`: Flow, Thread, Capability, Fuel, Channel, Arena, kernel,
+  driver, architecture and security contracts.
+- Each contract has an explicit Implemented/Partial/Proposed/Open status.
+- Documented current gaps: Flow/Thread merge, disabled work stealing, x86 UEFI
+  firmware dependency, arm64 missing MMU/GIC/SMP/user mode.
+
 ## 2026-11-21 — ISO/IMG release media
 - `make images` builds x86_64 and arm64 `.iso` and `.img` files.
 - x86_64 images are BIOS/UEFI hybrid; arm64 images are UEFI/MBR/FAT16.

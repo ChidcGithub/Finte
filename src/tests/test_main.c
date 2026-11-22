@@ -291,6 +291,40 @@ static void test_spawn(void)
     CHECK(s.flows_live == 0);
 }
 
+static int g_thread_ok;
+
+static void thread_probe(fflow_t *f)
+{
+    fthread_t *t = finte_thread_current();
+    g_thread_ok = t && t->flow == f && f->thread == t &&
+                  t->state == FINTE_THREAD_RUNNING &&
+                  f->state == FINTE_FLOW_RUNNING;
+}
+
+static const fprogram_t p_thread_probe = { "thread-probe", thread_probe, 1024 };
+
+static void test_thread_model(void)
+{
+    g_thread_ok = 0;
+    fhandle_t h = finte_flow_create("thread-test", &p_thread_probe, 1024,
+                                    FINTE_PERSONA_NATIVE);
+    fflow_t *f = finte_flow_lookup(h);
+    CHECK(f != NULL);
+    CHECK(f && f->thread != NULL);
+    if (!f || !f->thread) {
+        return;
+    }
+    CHECK(f->thread->flow == f);
+    CHECK(f->thread->state == FINTE_THREAD_CREATED);
+    CHECK(f->state == FINTE_FLOW_FREE);
+    CHECK_OK(finte_flow_start(h));
+    CHECK(f->thread != NULL);
+    CHECK(f->thread->state == FINTE_THREAD_READY);
+    finte_run();
+    CHECK(g_thread_ok == 1);
+    CHECK(finte_get_stats().flows_finished >= 1);
+}
+
 static uint64_t g_sum;
 
 static void producer10(fflow_t *f)
@@ -722,6 +756,7 @@ static const struct testcase g_tests[] = {
     { "channel close/EOF", test_channel_close },
     { "channel cap transfer", test_channel_caps },
     { "arena allocator", test_arena },
+    { "flow/thread split", test_thread_model },
     { "flow spawn/join", test_spawn },
     { "blocking channel", test_blocking },
     { "deadlock detection", test_deadlock },

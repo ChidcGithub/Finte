@@ -35,9 +35,9 @@ void finte_reset(void)
     }
     for (uint32_t i = 0; i < FINTE_MAX_FLOWS; i++) {
         fflow_t *f = &finte_core.flows[i];
-        if (f->in_use && f->ctx) {
-            hal_ctx_destroy(f->ctx);
-            f->ctx = NULL;
+        if (f->in_use && f->thread) {
+            finte_thread_release(f->thread);
+            f->thread = NULL;
         }
     }
     for (uint32_t i = 0; i < FINTE_MAX_ARENAS; i++) {
@@ -119,9 +119,9 @@ static void release_flow(fnode_t *n)
     fflow_t *f = &finte_core.flows[n->index];
     if (f->in_use && (f->state == FINTE_FLOW_DEAD ||
                       f->state == FINTE_FLOW_FREE)) {
-        if (f->ctx) {
-            hal_ctx_destroy(f->ctx);
-            f->ctx = NULL;
+        if (f->thread) {
+            finte_thread_release(f->thread);
+            f->thread = NULL;
         }
         f->in_use = 0;
     }

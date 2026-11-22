@@ -1274,7 +1274,8 @@ static void cmd_ps(const sh_ctx_t *ctx)
         }
         any = 1;
         sh_printf("  %s state=%s cpu=%u fuel=%u/%u\n", f->name,
-                  state_name(f->state), (unsigned)f->cpu,
+                  state_name(f->state),
+                  (unsigned)(f->thread ? f->thread->cpu : 0),
                   (unsigned)f->fuel, (unsigned)f->fuel_max);
     }
     if (!any) {

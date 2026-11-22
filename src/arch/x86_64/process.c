@@ -406,7 +406,9 @@ static void user_process_entry(fflow_t *f)
     if (!p) {
         finte_flow_exit(f, 1);
     }
-    f->ctx->addr_space = p->pml4_phys;
+    if (f->thread && f->thread->ctx) {
+        f->thread->ctx->addr_space = p->pml4_phys;
+    }
     write_cr3(p->pml4_phys);
     um_enter(p->entry, p->stack_top - 16u, 0x202u);
 }
@@ -471,8 +473,10 @@ static fproc_t *proc_create(const char *name, const char *elf, uint32_t pid,
     p->flow->user = p;
     /* Flows are assigned round-robin by finte_flow_create; the per-CPU TSS
      * and GDT let user processes run on any CPU. */
-    p->cpu = p->flow->cpu;
-    p->flow->priority = 0;
+    p->cpu = p->flow->thread ? p->flow->thread->cpu : 0;
+    if (p->flow->thread) {
+        p->flow->thread->priority = 0;
+    }
     stage = 8;
     if (finte_handle_valid(chan) && rights) {
         int slot = finte_cap_install(p->flow, chan, rights);
@@ -513,8 +517,8 @@ fail: {
 static int proc_start(fproc_t *p)
 {
     int rc = finte_flow_start(p->flow_handle).status;
-    if (rc == 0 && p->flow && p->flow->ctx) {
-        p->flow->ctx->addr_space = p->pml4_phys;
+    if (rc == 0 && p->flow && p->flow->thread && p->flow->thread->ctx) {
+        p->flow->thread->ctx->addr_space = p->pml4_phys;
     }
     return rc;
 }
@@ -754,7 +758,8 @@ int finte_proc_demo(void)
     /* Move one ready-to-start service to a different CPU to exercise the
      * explicit migration path before the batch starts. */
     if (hal_cpu_count() > 1 && p4->flow) {
-        uint32_t target = (p4->flow->cpu + 1u) % hal_cpu_count();
+        uint32_t cpu = p4->flow->thread ? p4->flow->thread->cpu : 0;
+        uint32_t target = (cpu + 1u) % hal_cpu_count();
         (void)finte_sched_migrate(p4->flow, target);
     }
     /* PID 1 probes supervisor memory on purpose: contained and expected. */

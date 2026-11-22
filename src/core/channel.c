@@ -1,13 +1,13 @@
 #include "finte/object.h"
 
-static fflow_t *wait_pop(fflow_t **head)
+static fthread_t *wait_pop(fthread_t **head)
 {
-    fflow_t *f = *head;
-    if (f) {
-        *head = f->wait_next;
-        f->wait_next = NULL;
+    fthread_t *t = *head;
+    if (t) {
+        *head = t->wait_next;
+        t->wait_next = NULL;
     }
-    return f;
+    return t;
 }
 
 void finte_chan_release_queue(fchan_t *ch)
@@ -86,9 +86,9 @@ fret_t finte_chan_send(fflow_t *f, uint16_t cap, fmsg_t *msg, uint32_t flags)
     f->stats.messages_sent++;
 
     if (ch->wait_recv) {
-        fflow_t *w = wait_pop(&ch->wait_recv);
+        fthread_t *w = wait_pop(&ch->wait_recv);
         if (w) {
-            finte_sched_wake(w);
+            finte_sched_wake_thread(w);
         }
     }
     return finte_ret_ok(0);
@@ -151,9 +151,9 @@ fret_t finte_chan_recv(fflow_t *f, uint16_t cap, fmsg_t *out, uint32_t flags)
     f->stats.messages_received++;
 
     if (ch->wait_send) {
-        fflow_t *w = wait_pop(&ch->wait_send);
+        fthread_t *w = wait_pop(&ch->wait_send);
         if (w) {
-            finte_sched_wake(w);
+            finte_sched_wake_thread(w);
         }
     }
     return finte_ret_ok(0);
@@ -177,15 +177,15 @@ fret_t finte_chan_close(fflow_t *f, uint16_t cap)
     ch->closed = 1;
 
     while (ch->wait_recv) {
-        fflow_t *w = wait_pop(&ch->wait_recv);
+        fthread_t *w = wait_pop(&ch->wait_recv);
         if (w) {
-            finte_sched_wake(w);
+            finte_sched_wake_thread(w);
         }
     }
     while (ch->wait_send) {
-        fflow_t *w = wait_pop(&ch->wait_send);
+        fthread_t *w = wait_pop(&ch->wait_send);
         if (w) {
-            finte_sched_wake(w);
+            finte_sched_wake_thread(w);
         }
     }
     return finte_ret_ok(0);

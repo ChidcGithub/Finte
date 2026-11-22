@@ -2,6 +2,8 @@
 
 The ABI has one purpose: make authority and data movement explicit without turning every operation into a path lookup or an `ioctl` multiplexer.
 
+For the target mechanism contracts, see the [FNKA contract set](fnka/README.md).
+
 ## Handles
 
 ```c
@@ -191,17 +193,17 @@ typedef struct fmsg {
 
 - `fx_send`, `fx_recv`, `fx_send_msg`, `fx_recv_msg` block.
 - `fx_try_send`, `fx_try_recv` set `FINTE_MSG_NONBLOCK` and return `FINTE_ERR_AGAIN` when the operation would block.
-- Blocking is cooperative: the flow is marked `BLOCKED`, placed on the channel's wait list, and switches to the scheduler.
+- Blocking is cooperative: the flow's primary thread is marked `BLOCKED`, placed on the channel's wait list, and switches to the scheduler. The flow state mirrors the thread in the serial-only stage.
 - A successful send/receive wakes one waiter.
 - `CHAN_CLOSE` marks the channel closed and wakes every waiter. Already-queued messages can still be received; once the ring is empty, receive returns `FINTE_ERR_EOF`. Send returns `FINTE_ERR_STATE`.
 - If all flows are blocked and there are no sleepers, the scheduler returns `FINTE_ERR_DEADLOCK`.
 
 ## Flow and scheduling ABI
 
-`finte_flow_create(name, program, fuel, persona)` creates a flow with an empty cap table. `finte_flow_start(handle)` allocates the stack/context, takes a scheduler reference, and enqueues it.
+`finte_flow_create(name, program, fuel, persona)` creates a flow with an empty cap table and one internal primary thread. `finte_flow_start(handle)` allocates the thread's stack/context, takes a scheduler reference, and enqueues the thread.
 
-- Default quantum: `FINTE_FUEL_QUANTUM` (24).
-- `fuel_max` is the refill amount at the start of an epoch.
+- Default quantum: `FINTE_FUEL_QUANTUM` (24), stored on the thread.
+- `fuel_max` is the refill amount at the start of an epoch, stored on the flow.
 - Priority 0 is the latency band; priority 1 is the batch band.
 - `FLOW_YIELD` returns after the scheduler runs the flow again.
 - `FLOW_EXIT` drops all caps and never returns.

@@ -20,14 +20,15 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 
 ## Status
 
-- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 19 self-tests passing on Linux/WSL and Windows.
+- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 20 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, PE32+ UEFI loaders for x86_64 and arm64, and FAT ESPs. `make images` produces x86_64 BIOS/UEFI hybrid media and arm64 UEFI ISO/IMG media.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
 - **Disk manager** with MBR/GPT partitions, ATA PIO (BIOS), AHCI and firmware Block I/O (UEFI), writable **lfc1 v2**, and read-only **NTFS**/**ext4**. An 8-entry read cache, atomic superblock-last sync, host `lfc1ck.py` validation/compaction, and capability-backed file handles.
 - **Shell** with `cd`/`pwd`, `write`, `mkdir`, `rm`, `touch`, `cp`, `mv`, `head`, `tail`, `hexdump`, `tree`, `df`, `sync`, history, arrows, home/end/delete and tab completion, in addition to the diagnostic commands.
 - **Timer preemption**: PIT at 100 Hz on the BSP, calibrated LAPIC timers on APs, PIC/LAPIC EOI handling, RFLAGS-aware context switching. Flows run with interrupts enabled; the scheduler and verb dispatcher run with them off. The `preempt` command proves two non-yielding flows make progress.
-- **SMP / multi-core scheduling**: a SIPI trampoline starts up to 8 CPUs, each with per-CPU run queues and locks, local APIC timers, idle IPIs and a per-CPU GDT/TSS. Idle CPUs steal ready work and `finte_sched_migrate()` moves flows between CPUs; per-CPU page/stack caches reduce allocator contention. A global core object lock still serializes verbs while flows compute in parallel. `smp` shows per-CPU ticks, IPIs, switches, steals and migrations.
+- **Flow/Thread split**: each Flow now owns an internal `fthread_t` with its own context, stack, CPU affinity, scheduling state and runtime accounting; Fuel, capabilities and task state stay on the Flow. User-visible Thread creation and Parallel Flows are future work.
+- **SMP / multi-core scheduling**: a SIPI trampoline starts up to 8 CPUs, each with per-CPU thread run queues and locks, local APIC timers, idle IPIs and a per-CPU GDT/TSS. `finte_sched_migrate()` moves flows between CPUs; work-stealing code exists but is currently disabled (`smp` reports `steals=0`). Per-CPU page/stack caches reduce allocator contention. A global core object lock still serializes verbs while flows compute in parallel. `smp` shows per-CPU ticks, IPIs, switches, steals and migrations.
 - **Color console**: the VGA text and GOP framebuffer consoles parse ANSI SGR sequences (`30`–`37`, `90`–`97`, bold) and expose a `color` palette command. Shell prompts, errors and results use color on real hardware as well as in QEMU.
 - **Scrollback**: both consoles keep a 512-line text history. `PageUp`/`PageDown`, `Shift+Up/Down`, `Home`/`End` and the PS/2 mouse wheel scroll it; any other key returns to the live prompt. `help` prints a compact multi-column command grid, and `help -v` keeps the description list.
 - **Boot logo and visible shutdown**: the shell prints a cyan `Finte` ASCII logo after POST. `shutdown` walks through a staged checklist — shell, idle CPUs, disk flush, timer preemption, interrupts — with short pauses, then powers off.
@@ -68,7 +69,7 @@ make image          # hybrid BIOS + UEFI USB image
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
 make user           # build init.elf + ipc.elf (packed into the initrd)
-make test           # 19 extended core self-tests
+make test           # 20 extended core self-tests
 make selfcheck      # startup POST/self-check suite
 make qemu           # BIOS boot, serial console (4 CPUs by default)
 make qemu-uefi      # UEFI/OVMF boot, serial console
@@ -395,9 +396,9 @@ shows each flow's assigned CPU, and `smp` shows the per-CPU scheduler:
 finte> smp
 cpus: 4 online
 cpu0 hwid=0 ticks=183 ipis=0 switches=25 steals=0 migrations=0 idle
-cpu1 hwid=3 ticks=9 ipis=6 switches=10 steals=1 migrations=0 idle
-cpu2 hwid=1 ticks=55 ipis=6 switches=58 steals=2 migrations=0 idle
-cpu3 hwid=2 ticks=49 ipis=5 switches=51 steals=1 migrations=0 idle
+cpu1 hwid=3 ticks=9 ipis=6 switches=10 steals=0 migrations=0 idle
+cpu2 hwid=1 ticks=55 ipis=6 switches=58 steals=0 migrations=2 idle
+cpu3 hwid=2 ticks=49 ipis=5 switches=51 steals=0 migrations=0 idle
 ```
 
 ## Linux compatibility
@@ -470,7 +471,7 @@ The performance argument is structural: handles are direct indexes, capability c
 - Linux x86_64 persona subset and RAMFS.
 - Host simulator on Linux (ucontext) and Windows (fibers).
 - Startup POST (9 POST checks) and 147 core checks in the kernel.
-- 19 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
+- 20 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
   writable-lfc1 persistence, timer-preemption, NVMe, USB-HID and ring-3 tests.
 
 **Deliberately not here yet**
@@ -479,13 +480,13 @@ The performance argument is structural: handles are direct indexes, capability c
   isolation, user faults, message passing, a shared page and `time`/`sleep` are
   in place. There is still no `fork`, `exec`, signal delivery, per-process file
   descriptor table, general `mmap`, or user-to-user capability transfer.
-- **Per-CPU TSS.** User processes currently run on the BSP because the kernel
-  keeps a single TSS; APs still schedule kernel flows. The frame allocator is a
-  bump allocator, so process teardown does not return pages yet.
+- **Per-CPU process teardown.** Per-CPU TSS/GDT is in place and user processes
+  can run on APs, but the frame allocator is still a bump allocator, so process
+  teardown does not return all pages yet.
 - **Fine-grained SMP scalability.** Up to 8 CPUs are started, but flows keep a
-  static CPU affinity, verbs take one global core lock, and there is no work
-  stealing or migration. User processes are pinned to the BSP because the
-  kernel keeps one TSS; SMP scheduling applies to native kernel flows.
+  static default affinity, verbs take one global core lock, and work stealing
+  is currently disabled. `finte_sched_migrate()` can move flows between CPUs;
+  there is no general load balancer or Parallel Flow model yet.
 - **Writable NTFS/ext4 and journaling.** Only lfc1 is writable. lfc1 sync is
   copy-on-write and append-only, so old trees consume space until compacted on
   the host; there is no journal or automatic garbage collection.
@@ -537,6 +538,7 @@ run-gui.ps1          windowed QEMU launcher for Windows (BIOS/UEFI)
 
 ## Documentation
 
+- [FNKA contracts](docs/fnka/README.md) — normative Flow/Thread, capability, Fuel, Channel, Arena and kernel contracts.
 - [Finte updates](docs/UPDATE.md) — short changelog; GitHub releases hold per-commit notes.
 - [Disk manager](docs/disk.md) — block devices, MBR/GPT, NTFS/ext4/lfc1, and the lfc1 format.
 - [Architecture](docs/architecture.md) — objects, flows, scheduling, boot path, design trade-offs.

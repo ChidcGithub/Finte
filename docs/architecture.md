@@ -1,5 +1,7 @@
 # Finte architecture
 
+For normative mechanism contracts, see the [FNKA contract set](fnka/README.md).
+
 Finte is a system core, not a complete operating system. It owns the parts that decide **who may do what**, **what executes**, **how work is scheduled**, and **how data and authority move**. It currently ships x86_64 and arm64 ports, a host simulator port, one Linux personality, a RAMFS, and bootable BIOS/UEFI media for both architectures.
 
 The design is optimized for two things:
@@ -41,6 +43,7 @@ Limits (defaults):
 | --- | ---: |
 | nodes | 512 |
 | flows | 64 |
+| threads | 64 |
 | channels | 64 |
 | arenas | 16 |
 | files | 64 |
@@ -96,20 +99,32 @@ The receiver cannot use an index from the sender; indices are local. If the rece
 
 ## 3. Flows
 
-A flow is the unit of execution:
+A Flow owns task state; its primary Thread owns CPU execution state:
 
 ```c
 typedef struct fflow {
-    uint8_t state;          // FREE, READY, RUNNING, BLOCKED, SLEEPING, THROTTLED, DEAD
+    uint8_t state;          // mirrors the primary Thread in v0.1
     uint8_t persona;        // NATIVE or LINUX
     uint32_t fuel;          // credits remaining
     uint32_t fuel_max;
-    uint32_t quantum;       // charged per dispatch
     fcap_t caps[32];
-    fhal_ctx_t *ctx;
+    fthread_t *thread;
     ...
 } fflow_t;
+
+typedef struct fthread {
+    uint8_t state;          // CREATED, READY, RUNNING, BLOCKED, SLEEPING, THROTTLED, DEAD
+    uint32_t cpu;           // affinity
+    uint32_t priority;
+    uint32_t quantum;       // charged per dispatch
+    fhal_ctx_t *ctx;
+    ...
+} fthread_t;
 ```
+
+Each Flow has exactly one primary Thread in the serial-only stage. The Thread
+owns the context, stack, CPU affinity, scheduler links and blocking state. The
+Flow owns capabilities, Fuel, persona and task state.
 
 Flows are created from an in-image program:
 
@@ -197,17 +212,22 @@ The arena is the intended bulk-data path: a producer allocates, writes, sends th
 
 ## 6. Scheduler
 
-The scheduler is a **two-band, O(1) FIFO** over ready flows:
+The scheduler is a **two-band, O(1) FIFO** over ready Threads:
 
 - band 0: latency-sensitive
 - band 1: batch
 - within a band, round-robin FIFO
 - run queues are intrusive linked lists (`next_run`)
-- blocked flows live on channel wait lists
+- blocked Threads live on channel wait lists
 - sleepers live on a separate list
-- exhausted flows live on a throttle list
+- Threads with exhausted Flow Fuel live on a throttle list
 
-Each dispatch charges `FINTE_FUEL_QUANTUM` (24) from the flow's `fuel`. If the flow yields after its last credit, it is throttled. When the run queues are empty and only throttled flows remain, the scheduler runs an **epoch**: it refills every throttled flow to `fuel_max`, increments `epochs`, and re-enqueues them. A flow cannot monopolize the core by consuming infinite CPU; it can only consume its budget and then wait for the next epoch.
+Each dispatch charges `FINTE_FUEL_QUANTUM` (24) from the owning Flow's `fuel`.
+If the Thread yields after its last credit, it is throttled. When the run queues
+are empty and only throttled Threads remain, the scheduler runs an **epoch**: it
+refills every throttled Flow to `fuel_max`, increments `epochs`, and re-enqueues
+their Threads. A Flow cannot monopolize the core by consuming infinite CPU; it
+can only consume its budget and then wait for the next epoch.
 
 The scheduler is **timer-preemptive and SMP-aware**:
 
@@ -217,43 +237,45 @@ The scheduler is **timer-preemptive and SMP-aware**:
 - APs are started through an INIT/SIPI trampoline at physical `0x8000`. Each AP
   loads the BSP's GDT/IDT (relocated to kernel memory first), claims a logical
   CPU slot, installs its own GS base, builds its own GDT/TSS lazily on first
-  flow switch, and enters `finte_sched_ap_run()`.
-- Each CPU owns a two-band run queue and a **per-CPU run-queue lock**. A small
-  state lock covers sleep/throttle lists and blocked/ready transitions, not
-  queue pops. A `queued` flag prevents double insertion.
-- An idle CPU **steals** one ready flow from another queue without taking the
-  state lock. `finte_sched_migrate()` moves a queued flow between CPUs and
-  changes affinity for running/blocked/sleeping flows; `smp` reports steals
-  and migrations per CPU.
+  Thread switch, and enters `finte_sched_ap_run()`.
+- Each CPU owns a two-band Thread run queue and a **per-CPU run-queue lock**. A
+  small state lock covers sleep/throttle lists and blocked/ready transitions,
+  not queue pops. A `queued` flag prevents double insertion.
+- `steal_one()` implements work stealing without taking the state lock, but
+  the scheduler currently disables it with `if (!t && 0)`. `finte_sched_migrate()`
+  still moves a Flow's primary Thread between CPUs and changes affinity for
+  running/blocked/sleeping Threads; `smp` reports the steal and migration
+  counters per CPU.
 - Per-CPU page and 32 KiB stack caches absorb allocator traffic before the
-  global free lists; node and flow allocation scan from per-CPU hints.
-- The timer gate calls `finte_sched_preempt()`, which marks the running flow
+  global free lists; node and Flow allocation scan from per-CPU hints.
+- The timer gate calls `finte_sched_preempt()`, which marks the running Thread
   READY and switches to that CPU's scheduler stack. `kx_switch` saves RFLAGS as
-  well as the callee-saved registers. Flows run with IF=1; schedulers keep IF=0.
+  well as the callee-saved registers. Threads run with IF=1; schedulers keep
+  IF=0.
 - `finte_syscall` takes a global **core lock** and disables interrupts. The lock
   serializes object, capability, channel, arena, disk and console operations
   across CPUs. Blocking verbs release it around the context switch and
-  reacquire it when woken; a timer cannot preempt a flow in the middle of a
+  reacquire it when woken; a timer cannot preempt a Thread in the middle of a
   verb. Splitting this object-table lock is the next scheduling stage.
 - Reschedule IPIs are sent only to CPUs parked in HLT. Batch start broadcasts a
   wakeup; an idle AP sleeps until an IPI or its local timer. AP timers are
-  masked while no flow is running.
+  masked while no Thread is running.
 - The host HAL implements the interrupt and SMP hooks as no-ops, so host tests
   keep deterministic single-threaded behavior.
 
 The `preempt` shell command proves preemption: a spinner never yields, a second
 flow counts to 60 million and sets the stop flag, and both finish only because
 timer ticks interleave them. Under `-smp 4`, `smp` shows all CPUs and their
-per-CPU tick/IPI/switch counters; `ps` shows each flow's assigned CPU.
+per-CPU tick/IPI/switch counters; `ps` shows each Thread's assigned CPU.
 
-Sleeping flows use `hal_now_ns`. The timer IRQ calls `finte_sched_tick()`,
-which expires sleepers even while a CPU-bound flow never yields; this is what
+Sleeping Threads use `hal_now_ns`. The timer IRQ calls `finte_sched_tick()`,
+which expires sleepers even while a CPU-bound Thread never yields; this is what
 lets a sleeping task preempt a user spinner. The scheduler loop still checks
-the earliest wake time when the CPU is idle. User processes are round-robin
-scheduled on the BSP; kernel flows continue to use every CPU. Firmware calls
-temporarily switch to the firmware IDT with interrupts enabled, then restore
-the caller's IDT and RFLAGS. The BSP's LAPIC timer state is left to OVMF so
-firmware ConIn and Block I/O keep working after APs are online.
+the earliest wake time when the CPU is idle. User processes can run on APs; the
+per-CPU TSS/GDT binds the user stack on each switch. Firmware calls temporarily
+switch to the firmware IDT with interrupts enabled, then restore the caller's
+IDT and RFLAGS. The BSP's LAPIC timer state is left to OVMF so firmware ConIn
+and Block I/O keep working after APs are online.
 
 Statistics are kept globally and per flow: syscalls, context switches, messages, caps installed/dropped/denied, fuel burned, epochs, deadlocks.
 

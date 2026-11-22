@@ -2,6 +2,8 @@
 
 Finte does **not** use GRUB. The boot path is our own code.
 
+For the target boot handoff contract, see the [FNKA boot protocol](fnka/kernel/boot-protocol.md).
+
 ## Hybrid image layout
 
 `build/finte.img` is a raw disk/USB image:

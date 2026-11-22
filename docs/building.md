@@ -51,7 +51,7 @@ make initrd         # build/initrd.bin
 make image          # build/finte.img (BIOS + UEFI USB image)
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
-make test           # 19 extended self-tests (host)
+make test           # 20 extended self-tests (host)
 make selfcheck      # startup POST/self-check suite (host)
 make demo           # host-side native pipeline
 make compat         # host-side Linux persona
@@ -303,7 +303,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 
 ## Test matrix
 
-- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 19 host tests, BIOS CLI boot
+- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 20 host tests, BIOS CLI boot
   test, kernel POST, USB mass-storage boot, VGA screenshot, PS/2 keyboard,
   timer preemption (`preempt=OK`), ring-3 `user`/`procs`, 4-CPU SMP boot.
 - 4-CPU scheduler: `selfcheck` 147/147, `demo`, `preempt`, `compat`, `smp`,
@@ -326,7 +326,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 - Windows 11 QEMU GTK GUI: UEFI boot, 1280x800 window, shell screenshot.
 - Windows 11 QEMU + WHPX: 4-CPU boot, UEFI disk write/read, real keyboard
   input, `preempt` ~135 ms (vs ~397 ms TCG).
-- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 19 tests,
+- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 20 tests,
   self-check, demo, compat, benchmark.
 
 Physical laptop validation is still pending; the image is built for both BIOS

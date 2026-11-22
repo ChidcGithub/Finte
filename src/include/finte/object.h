@@ -7,6 +7,7 @@
 #include "finte/disk.h"
 
 typedef struct fflow fflow_t;
+typedef struct fthread fthread_t;
 typedef struct fchan fchan_t;
 typedef struct farena farena_t;
 typedef struct ffile ffile_t;
@@ -41,6 +42,19 @@ typedef enum {
     FINTE_FLOW_DEAD = 6
 } fflow_state_t;
 
+/* Thread states intentionally share the numeric values of the matching Flow
+ * states. A Flow's state mirrors its primary Thread in the serial-only stage. */
+typedef enum {
+    FINTE_THREAD_FREE = FINTE_FLOW_FREE,
+    FINTE_THREAD_READY = FINTE_FLOW_READY,
+    FINTE_THREAD_RUNNING = FINTE_FLOW_RUNNING,
+    FINTE_THREAD_BLOCKED = FINTE_FLOW_BLOCKED,
+    FINTE_THREAD_SLEEPING = FINTE_FLOW_SLEEPING,
+    FINTE_THREAD_THROTTLED = FINTE_FLOW_THROTTLED,
+    FINTE_THREAD_DEAD = FINTE_FLOW_DEAD,
+    FINTE_THREAD_CREATED = 7
+} fthread_state_t;
+
 typedef enum {
     FINTE_PERSONA_NATIVE = 0,
     FINTE_PERSONA_LINUX = 1
@@ -64,35 +78,46 @@ typedef struct flinux_state {
     int32_t last_errno;
 } flinux_state_t;
 
+/* A Thread is the CPU execution entity. In the serial-only stage each Flow
+ * owns exactly one Thread. The Flow keeps task state and the Thread keeps the
+ * context, stack, CPU affinity and scheduler links. */
+struct fthread {
+    uint8_t in_use;
+    uint8_t state;
+    uint8_t queued;
+    uint8_t blocking;
+    uint8_t wake_pending;
+    uint8_t wait_send;
+    uint16_t slot;
+    uint32_t cpu;
+    uint32_t priority;
+    uint32_t quantum;
+    uint64_t cycles;
+    uint64_t wake_ns;
+    fflow_t *flow;
+    fchan_t *wait_chan;
+    struct fthread *next_run;
+    struct fthread *next_throttle;
+    struct fthread *next_sleep;
+    struct fthread *wait_next;
+    fhal_ctx_t *ctx;
+};
+
 struct fflow {
     uint8_t in_use;
     uint8_t state;
     uint8_t persona;
-    uint8_t priority;
+    uint8_t started;
     uint16_t slot;
     uint16_t cap_count;
-    uint32_t cpu;
     uint32_t fuel;
     uint32_t fuel_max;
-    uint32_t quantum;
     uint32_t exit_code;
-    uint64_t wake_ns;
     fhandle_t self;
     const fprogram_t *prog;
     fcap_t caps[FINTE_MAX_CAPS];
-    fhal_ctx_t *ctx;
-    struct fflow *next_run;
-    struct fflow *next_throttle;
-    struct fflow *next_sleep;
-    struct fflow *wait_next;
-    struct fflow *waiters;
-    struct fchan *wait_chan;
-    uint8_t wait_send;
-    uint8_t started;
-    uint8_t queued;
-    uint8_t blocking;
-    uint8_t wake_pending;
-    uint64_t cycles;
+    fthread_t *thread;
+    struct fthread *waiters;
     fflow_stats_t stats;
     flinux_state_t linux;
     void *user;
@@ -108,8 +133,8 @@ struct fchan {
     uint16_t count;
     uint32_t aux;
     fhandle_t self;
-    fflow_t *wait_send;
-    fflow_t *wait_recv;
+    fthread_t *wait_send;
+    fthread_t *wait_recv;
     uint64_t sent;
     uint64_t received;
     fmsg_t ring[FINTE_CHAN_CAP];
@@ -176,15 +201,14 @@ typedef struct finte_core {
     uint32_t rng;
     fnode_t nodes[FINTE_MAX_NODES];
     fflow_t flows[FINTE_MAX_FLOWS];
+    fthread_t threads[FINTE_MAX_THREADS];
     fchan_t channels[FINTE_MAX_CHANNELS];
     farena_t arenas[FINTE_MAX_ARENAS];
     ffile_t files[FINTE_MAX_FILES];
     fdir_t dirs[FINTE_MAX_DIRS];
     fstats_t stats;
-    fflow_t *runq[2];
-    fflow_t *runq_tail[2];
-    fflow_t *throttle;
-    fflow_t *sleepers;
+    fthread_t *throttle;
+    fthread_t *sleepers;
     fhandle_t console_default;
     uint64_t boot_cycles;
 } finte_core_t;
@@ -267,6 +291,14 @@ void finte_sched_enqueue(fflow_t *f);
 void finte_sched_switch_out(fflow_t *f);
 void finte_sched_preempt(fflow_t *f);
 void finte_sched_sleep(fflow_t *f, uint64_t wake_ns);
+void finte_sched_wake_thread(fthread_t *t);
+void finte_sched_enqueue_thread(fthread_t *t);
+void finte_sched_switch_out_thread(fthread_t *t);
+void finte_sched_preempt_thread(fthread_t *t);
+void finte_sched_sleep_thread(fthread_t *t, uint64_t wake_ns);
+void finte_sched_throttle_thread(fthread_t *t);
+fthread_t *finte_thread_current(void);
+void finte_thread_release(fthread_t *t);
 void finte_sched_tick(void);
 int finte_sched_migrate(fflow_t *f, uint32_t target);
 

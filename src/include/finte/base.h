@@ -41,6 +41,9 @@
 #ifndef FINTE_MAX_FLOWS
 #define FINTE_MAX_FLOWS 64
 #endif
+#ifndef FINTE_MAX_THREADS
+#define FINTE_MAX_THREADS 64
+#endif
 #ifndef FINTE_MAX_CHANNELS
 #define FINTE_MAX_CHANNELS 64
 #endif

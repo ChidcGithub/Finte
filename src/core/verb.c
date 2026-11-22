@@ -155,10 +155,10 @@ static fret_t verb_chan_info(fflow_t *f, const uint64_t args[6])
     out->closed = ch->closed;
     out->sent = ch->sent;
     out->received = ch->received;
-    for (fflow_t *w = ch->wait_send; w; w = w->wait_next) {
+    for (fthread_t *w = ch->wait_send; w; w = w->wait_next) {
         out->waiting_send++;
     }
-    for (fflow_t *w = ch->wait_recv; w; w = w->wait_next) {
+    for (fthread_t *w = ch->wait_recv; w; w = w->wait_next) {
         out->waiting_recv++;
     }
     finte_strlcpy(out->name, ch->name, sizeof(out->name));

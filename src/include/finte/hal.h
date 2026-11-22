@@ -10,6 +10,7 @@
 #include "finte/base.h"
 
 typedef struct fhal_ctx fhal_ctx_t;
+struct fthread;
 
 #define FINTE_MAX_CPUS 8
 
@@ -25,6 +26,7 @@ typedef enum {
 typedef struct fcpu {
     struct fcpu *self;
     struct fflow *current;
+    struct fthread *current_thread;
     struct fhal_ctx *sched_ctx;
     uint32_t id;
     uint32_t hw_id;             /* APIC id, MPIDR affinity, ... */
@@ -43,8 +45,8 @@ typedef struct fcpu {
     uint32_t node_hint;
     uint32_t flow_hint;
     volatile int runq_lock;
-    struct fflow *runq[2];
-    struct fflow *runq_tail[2];
+    struct fthread *runq[2];
+    struct fthread *runq_tail[2];
 } fcpu_t;
 
 struct fhal_ctx {

@@ -5,9 +5,51 @@
 
 static uint32_t g_next_cpu;
 
+static fthread_t *thread_alloc(fflow_t *f)
+{
+    uint32_t start = f->slot % FINTE_MAX_THREADS;
+    for (uint32_t k = 0; k < FINTE_MAX_THREADS; k++) {
+        uint32_t i = (start + k) % FINTE_MAX_THREADS;
+        fthread_t *t = &finte_core.threads[i];
+        if (t->in_use) {
+            continue;
+        }
+        finte_memset(t, 0, sizeof(*t));
+        t->in_use = 1;
+        t->state = FINTE_THREAD_CREATED;
+        t->slot = (uint16_t)i;
+        t->flow = f;
+        t->priority = 0;
+        t->quantum = FINTE_FUEL_QUANTUM;
+        uint32_t ncpu = hal_cpu_count();
+        if (ncpu == 0) {
+            ncpu = 1;
+        }
+        t->cpu = (g_next_cpu++) % ncpu;
+        return t;
+    }
+    return NULL;
+}
+
+void finte_thread_release(fthread_t *t)
+{
+    if (!t || !t->in_use) {
+        return;
+    }
+    if (t->ctx) {
+        hal_ctx_destroy(t->ctx);
+        t->ctx = NULL;
+    }
+    finte_memset(t, 0, sizeof(*t));
+    t->state = FINTE_THREAD_FREE;
+}
+
 static void flow_entry_trampoline(void *arg)
 {
     fflow_t *f = (fflow_t *)arg;
+    if (f->thread) {
+        f->thread->state = FINTE_THREAD_RUNNING;
+    }
     f->state = FINTE_FLOW_RUNNING;
     if (f->prog && f->prog->entry) {
         f->prog->entry(f);
@@ -39,12 +81,12 @@ fhandle_t finte_flow_create(const char *name, const fprogram_t *prog,
         f->persona = persona;
         f->fuel_max = fuel ? fuel : 1024;
         f->fuel = f->fuel_max;
-        f->quantum = FINTE_FUEL_QUANTUM;
-        uint32_t ncpu = hal_cpu_count();
-        if (ncpu == 0) {
-            ncpu = 1;
+        f->thread = thread_alloc(f);
+        if (!f->thread) {
+            /* refs==0, so this releases the flow node as well. */
+            finte_node_unref(h);
+            return FINTE_HANDLE_NONE;
         }
-        f->cpu = (g_next_cpu++) % ncpu;
         finte_strlcpy(f->name, name ? name : (prog && prog->name ? prog->name : "flow"),
                       sizeof(f->name));
         for (int c = 0; c < FINTE_MAX_CAPS; c++) {
@@ -65,17 +107,28 @@ fret_t finte_flow_start(fhandle_t flow)
     if (f->started) {
         return finte_ret(FINTE_ERR_STATE, 0);
     }
+    fthread_t *t = f->thread;
+    if (!t || t->state != FINTE_THREAD_CREATED) {
+        return finte_ret(FINTE_ERR_STATE, 0);
+    }
     finte_core_lock();
-    f->ctx = hal_ctx_create(flow_entry_trampoline, f, FINTE_FLOW_STACK);
-    if (!f->ctx) {
+    if (f->started) {
+        finte_core_unlock();
+        return finte_ret(FINTE_ERR_STATE, 0);
+    }
+    if (!t->ctx) {
+        t->ctx = hal_ctx_create(flow_entry_trampoline, f, FINTE_FLOW_STACK);
+    }
+    if (!t->ctx) {
         finte_core_unlock();
         return finte_ret(FINTE_ERR_NOMEM, 0);
     }
     finte_node_ref(f->self); /* scheduler ownership */
     f->started = 1;
     f->state = FINTE_FLOW_READY;
+    t->state = FINTE_THREAD_READY;
     finte_core.stats.flows_started++;
-    finte_sched_enqueue(f);
+    finte_sched_enqueue_thread(t);
     finte_core_unlock();
     return finte_ret_ok(0);
 }
@@ -106,70 +159,85 @@ fflow_t *finte_flow_current(void)
     return hal_cpu_self()->current;
 }
 
+fthread_t *finte_thread_current(void)
+{
+    return hal_cpu_self()->current_thread;
+}
+
 void finte_flow_yield(fflow_t *f)
 {
-    if (!f || !hal_cpu_self()->sched_ctx) {
+    fthread_t *t = f ? f->thread : NULL;
+    if (!f || !t || !t->ctx || !hal_cpu_self()->sched_ctx) {
         return;
     }
     finte_core_lock();
     f->state = FINTE_FLOW_READY;
+    t->state = FINTE_THREAD_READY;
     uint32_t depth = finte_core_lock_suspend();
-    hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
+    hal_ctx_switch(t->ctx, hal_cpu_self()->sched_ctx);
     finte_core_lock_resume(depth);
     f->state = FINTE_FLOW_RUNNING;
+    t->state = FINTE_THREAD_RUNNING;
     finte_core_unlock();
 }
 
 void finte_flow_sleep(fflow_t *f, uint64_t ns)
 {
-    if (!f || !hal_cpu_self()->sched_ctx) {
+    fthread_t *t = f ? f->thread : NULL;
+    if (!f || !t || !t->ctx || !hal_cpu_self()->sched_ctx) {
         return;
     }
     finte_core_lock();
-    f->blocking = 1;
-    finte_sched_sleep(f, hal_now_ns() + ns);
+    t->blocking = 1;
+    finte_sched_sleep_thread(t, hal_now_ns() + ns);
     uint32_t depth = finte_core_lock_suspend();
-    hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
+    hal_ctx_switch(t->ctx, hal_cpu_self()->sched_ctx);
     finte_core_lock_resume(depth);
-    f->blocking = 0;
-    f->wake_pending = 0;
+    t->blocking = 0;
+    t->wake_pending = 0;
     f->state = FINTE_FLOW_RUNNING;
+    t->state = FINTE_THREAD_RUNNING;
     finte_core_unlock();
 }
 
 void finte_flow_block(fflow_t *f, fchan_t *ch, int is_send)
 {
-    if (!f || !ch || !hal_cpu_self()->sched_ctx) {
+    fthread_t *t = f ? f->thread : NULL;
+    if (!f || !t || !ch || !t->ctx || !hal_cpu_self()->sched_ctx) {
         return;
     }
     finte_core_lock();
     f->state = FINTE_FLOW_RUNNING;
-    f->blocking = 1;
-    f->wait_chan = ch;
-    f->wait_send = (uint8_t)(is_send ? 1 : 0);
-    f->wait_next = NULL;
-    fflow_t **head = is_send ? &ch->wait_send : &ch->wait_recv;
+    t->state = FINTE_THREAD_RUNNING;
+    t->blocking = 1;
+    t->wait_chan = ch;
+    t->wait_send = (uint8_t)(is_send ? 1 : 0);
+    t->wait_next = NULL;
+    fthread_t **head = is_send ? &ch->wait_send : &ch->wait_recv;
     if (!*head) {
-        *head = f;
+        *head = t;
     } else {
-        fflow_t *it = *head;
+        fthread_t *it = *head;
         while (it->wait_next) {
             it = it->wait_next;
         }
-        it->wait_next = f;
+        it->wait_next = t;
     }
     uint32_t depth = finte_core_lock_suspend();
-    hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
+    hal_ctx_switch(t->ctx, hal_cpu_self()->sched_ctx);
     finte_core_lock_resume(depth);
-    f->blocking = 0;
-    f->wake_pending = 0;
+    t->blocking = 0;
+    t->wake_pending = 0;
     f->state = FINTE_FLOW_RUNNING;
+    t->state = FINTE_THREAD_RUNNING;
     finte_core_unlock();
 }
 
 void finte_flow_wait_for(fflow_t *f, fflow_t *target)
 {
-    if (!f || !target || target == f || !hal_cpu_self()->sched_ctx) {
+    fthread_t *t = f ? f->thread : NULL;
+    if (!f || !t || !target || target == f || !t->ctx ||
+        !hal_cpu_self()->sched_ctx) {
         return;
     }
     finte_core_lock();
@@ -178,45 +246,49 @@ void finte_flow_wait_for(fflow_t *f, fflow_t *target)
         return;
     }
     f->state = FINTE_FLOW_RUNNING;
-    f->blocking = 1;
-    f->wait_chan = NULL;
-    f->wait_send = 0;
-    f->wait_next = target->waiters;
-    target->waiters = f;
+    t->state = FINTE_THREAD_RUNNING;
+    t->blocking = 1;
+    t->wait_chan = NULL;
+    t->wait_send = 0;
+    t->wait_next = target->waiters;
+    target->waiters = t;
     uint32_t depth = finte_core_lock_suspend();
-    hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
+    hal_ctx_switch(t->ctx, hal_cpu_self()->sched_ctx);
     finte_core_lock_resume(depth);
-    f->blocking = 0;
-    f->wake_pending = 0;
+    t->blocking = 0;
+    t->wake_pending = 0;
     f->state = FINTE_FLOW_RUNNING;
+    t->state = FINTE_THREAD_RUNNING;
     finte_core_unlock();
 }
 
 void finte_flow_exit(fflow_t *f, int code)
 {
-    if (!f) {
-        hal_panic("flow exit without flow");
+    if (!f || !f->thread) {
+        hal_panic("flow exit without thread");
     }
+    fthread_t *t = f->thread;
     finte_core_lock();
     f->state = FINTE_FLOW_DEAD;
+    t->state = FINTE_THREAD_DEAD;
     f->exit_code = (uint32_t)code;
 
     /* Wake flows that are waiting for this one to finish. */
-    fflow_t *w = f->waiters;
+    fthread_t *w = f->waiters;
     f->waiters = NULL;
     while (w) {
-        fflow_t *next = w->wait_next;
+        fthread_t *next = w->wait_next;
         w->wait_next = NULL;
         w->wait_chan = NULL;
         w->wait_send = 0;
-        finte_sched_wake(w);
+        finte_sched_wake_thread(w);
         w = next;
     }
 
     finte_cap_drop_all(f);
     (void)finte_core_lock_suspend();
-    if (hal_cpu_self()->sched_ctx) {
-        hal_ctx_switch(f->ctx, hal_cpu_self()->sched_ctx);
+    if (hal_cpu_self()->sched_ctx && t->ctx) {
+        hal_ctx_switch(t->ctx, hal_cpu_self()->sched_ctx);
     }
     /* A finished flow must never be resumed. */
     hal_panic("dead flow resumed");

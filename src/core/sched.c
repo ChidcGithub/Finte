@@ -1,19 +1,20 @@
-/* Multi-core flow scheduler.
+/* Multi-core thread scheduler.
  *
- * Each flow is assigned to a CPU when it is created. Run queues and their
- * locks are per-CPU; a smaller state lock protects sleep/throttle lists and
- * blocked/ready transitions. An idle CPU steals one ready flow from a busier
- * queue. The BSP owns batch finalization, but every CPU can refill sleepers
- * and throttled flows.
+ * Each Flow owns one primary Thread in the serial-only stage. Run queues and
+ * their locks are per-CPU; a smaller state lock protects sleep/throttle lists
+ * and blocked/ready transitions. An idle CPU can steal one ready Thread from a
+ * busier queue (stealing is currently disabled while the wake/switch path is
+ * validated). The BSP owns batch finalization, but every CPU can refill
+ * sleepers and throttled Threads.
  */
 #include "finte/object.h"
 
 static volatile int g_state_lock;
 static volatile int g_batch;
 
-static int band_of(const fflow_t *f)
+static int band_of(const fthread_t *t)
 {
-    return f->priority == 0 ? 0 : 1;
+    return t->priority == 0 ? 0 : 1;
 }
 
 static uint64_t state_lock(void)
@@ -42,44 +43,44 @@ static void runq_unlock(fcpu_t *cpu, uint64_t flags)
     hal_irq_restore(flags);
 }
 
-static void runq_push_locked(fcpu_t *cpu, fflow_t *f)
+static void runq_push_locked(fcpu_t *cpu, fthread_t *t)
 {
-    int band = band_of(f);
-    f->next_run = NULL;
+    int band = band_of(t);
+    t->next_run = NULL;
     if (!cpu->runq[band]) {
-        cpu->runq[band] = f;
-        cpu->runq_tail[band] = f;
+        cpu->runq[band] = t;
+        cpu->runq_tail[band] = t;
     } else {
-        cpu->runq_tail[band]->next_run = f;
-        cpu->runq_tail[band] = f;
+        cpu->runq_tail[band]->next_run = t;
+        cpu->runq_tail[band] = t;
     }
 }
 
-static fflow_t *runq_take_locked(fcpu_t *cpu)
+static fthread_t *runq_take_locked(fcpu_t *cpu)
 {
     for (int band = 0; band < 2; band++) {
-        fflow_t *f = cpu->runq[band];
-        if (!f) {
+        fthread_t *t = cpu->runq[band];
+        if (!t) {
             continue;
         }
-        cpu->runq[band] = f->next_run;
+        cpu->runq[band] = t->next_run;
         if (!cpu->runq[band]) {
             cpu->runq_tail[band] = NULL;
         }
-        f->next_run = NULL;
-        return f;
+        t->next_run = NULL;
+        return t;
     }
     return NULL;
 }
 
-static int runq_remove_locked(fcpu_t *cpu, fflow_t *f)
+static int runq_remove_locked(fcpu_t *cpu, fthread_t *t)
 {
     for (int band = 0; band < 2; band++) {
-        fflow_t **pp = &cpu->runq[band];
+        fthread_t **pp = &cpu->runq[band];
         while (*pp) {
-            if (*pp == f) {
-                *pp = f->next_run;
-                if (cpu->runq_tail[band] == f || !cpu->runq_tail[band]) {
+            if (*pp == t) {
+                *pp = t->next_run;
+                if (cpu->runq_tail[band] == t || !cpu->runq_tail[band]) {
                     cpu->runq_tail[band] = cpu->runq[band];
                     while (cpu->runq_tail[band] &&
                            cpu->runq_tail[band]->next_run) {
@@ -87,7 +88,7 @@ static int runq_remove_locked(fcpu_t *cpu, fflow_t *f)
                             cpu->runq_tail[band]->next_run;
                     }
                 }
-                f->next_run = NULL;
+                t->next_run = NULL;
                 return 1;
             }
             pp = &(*pp)->next_run;
@@ -118,9 +119,9 @@ static void wake_queued(void)
     }
 }
 
-static fcpu_t *flow_cpu(fflow_t *f)
+static fcpu_t *thread_cpu(fthread_t *t)
 {
-    fcpu_t *cpu = hal_cpu_slot(f->cpu);
+    fcpu_t *cpu = hal_cpu_slot(t->cpu);
     if (!cpu || !cpu->online) {
         cpu = hal_cpu_slot(0);
     }
@@ -128,151 +129,188 @@ static fcpu_t *flow_cpu(fflow_t *f)
 }
 
 /* Called with the state lock held. Takes the target queue lock. */
-static void enqueue_locked(fflow_t *f)
+static void enqueue_locked(fthread_t *t)
 {
-    if (f->queued) {
+    if (!t || !t->in_use || !t->flow || t->queued) {
         return;
     }
-    fcpu_t *cpu = flow_cpu(f);
+    fcpu_t *cpu = thread_cpu(t);
     uint64_t flags = runq_lock(cpu);
-    f->cpu = cpu->id;
-    f->state = FINTE_FLOW_READY;
-    f->queued = 1;
-    runq_push_locked(cpu, f);
+    t->cpu = cpu->id;
+    t->state = FINTE_THREAD_READY;
+    t->flow->state = FINTE_FLOW_READY;
+    t->queued = 1;
+    runq_push_locked(cpu, t);
     runq_unlock(cpu, flags);
 }
 
-void finte_sched_enqueue(fflow_t *f)
+void finte_sched_enqueue_thread(fthread_t *t)
 {
-    if (!f || !f->in_use || f->state == FINTE_FLOW_DEAD ||
-        f->state == FINTE_FLOW_FREE) {
+    if (!t || !t->in_use || !t->flow || t->state == FINTE_THREAD_DEAD ||
+        t->state == FINTE_THREAD_FREE) {
         return;
     }
     uint64_t flags = state_lock();
-    enqueue_locked(f);
-    uint32_t target = f->cpu;
+    enqueue_locked(t);
+    uint32_t target = t->cpu;
     state_unlock(flags);
     if (g_batch) {
         hal_cpu_wake(target);
     }
 }
 
-void finte_sched_throttle(fflow_t *f)
+void finte_sched_enqueue(fflow_t *f)
 {
-    if (!f) {
+    if (f) {
+        finte_sched_enqueue_thread(f->thread);
+    }
+}
+
+void finte_sched_throttle_thread(fthread_t *t)
+{
+    if (!t || !t->in_use || !t->flow) {
         return;
     }
     uint64_t flags = state_lock();
-    f->state = FINTE_FLOW_THROTTLED;
-    f->next_throttle = finte_core.throttle;
-    finte_core.throttle = f;
+    t->state = FINTE_THREAD_THROTTLED;
+    t->flow->state = FINTE_FLOW_THROTTLED;
+    t->next_throttle = finte_core.throttle;
+    finte_core.throttle = t;
+    state_unlock(flags);
+}
+
+void finte_sched_throttle(fflow_t *f)
+{
+    if (f) {
+        finte_sched_throttle_thread(f->thread);
+    }
+}
+
+void finte_sched_sleep_thread(fthread_t *t, uint64_t wake_ns)
+{
+    if (!t || !t->in_use || !t->flow) {
+        return;
+    }
+    uint64_t flags = state_lock();
+    t->wake_ns = wake_ns;
+    t->state = FINTE_THREAD_SLEEPING;
+    t->flow->state = FINTE_FLOW_SLEEPING;
+    t->next_sleep = finte_core.sleepers;
+    finte_core.sleepers = t;
     state_unlock(flags);
 }
 
 void finte_sched_sleep(fflow_t *f, uint64_t wake_ns)
 {
-    if (!f) {
-        return;
+    if (f) {
+        finte_sched_sleep_thread(f->thread, wake_ns);
     }
-    uint64_t flags = state_lock();
-    f->wake_ns = wake_ns;
-    f->state = FINTE_FLOW_SLEEPING;
-    f->next_sleep = finte_core.sleepers;
-    finte_core.sleepers = f;
-    state_unlock(flags);
 }
 
-static fflow_t *runq_pop_cpu(fcpu_t *cpu)
+static fthread_t *runq_pop_cpu(fcpu_t *cpu)
 {
     uint64_t flags = runq_lock(cpu);
-    fflow_t *f = runq_take_locked(cpu);
-    if (f) {
-        f->queued = 0;
-        f->state = FINTE_FLOW_RUNNING;
+    fthread_t *t = runq_take_locked(cpu);
+    if (t) {
+        t->queued = 0;
+        t->state = FINTE_THREAD_RUNNING;
+        if (t->flow) {
+            t->flow->state = FINTE_FLOW_RUNNING;
+        }
     }
     runq_unlock(cpu, flags);
-    return f;
+    return t;
 }
 
-static void wait_list_remove_locked(fflow_t *f)
+static void wait_list_remove_locked(fthread_t *t)
 {
-    if (!f || !f->wait_chan) {
+    if (!t || !t->wait_chan) {
         return;
     }
-    fchan_t *ch = f->wait_chan;
-    fflow_t **head = f->wait_send ? &ch->wait_send : &ch->wait_recv;
-    fflow_t **pp = head;
-    while (*pp && *pp != f) {
+    fchan_t *ch = t->wait_chan;
+    fthread_t **head = t->wait_send ? &ch->wait_send : &ch->wait_recv;
+    fthread_t **pp = head;
+    while (*pp && *pp != t) {
         pp = &(*pp)->wait_next;
     }
-    if (*pp == f) {
-        *pp = f->wait_next;
+    if (*pp == t) {
+        *pp = t->wait_next;
     }
-    f->wait_next = NULL;
-    f->wait_chan = NULL;
-    f->wait_send = 0;
+    t->wait_next = NULL;
+    t->wait_chan = NULL;
+    t->wait_send = 0;
 }
 
-static void sleep_list_remove_locked(fflow_t *f)
+static void sleep_list_remove_locked(fthread_t *t)
 {
-    fflow_t **pp = &finte_core.sleepers;
+    fthread_t **pp = &finte_core.sleepers;
     while (*pp) {
-        if (*pp == f) {
-            *pp = f->next_sleep;
-            f->next_sleep = NULL;
+        if (*pp == t) {
+            *pp = t->next_sleep;
+            t->next_sleep = NULL;
             return;
         }
         pp = &(*pp)->next_sleep;
     }
 }
 
-void finte_sched_wake(fflow_t *f)
+void finte_sched_wake_thread(fthread_t *t)
 {
-    if (!f || !f->in_use) {
+    if (!t || !t->in_use || !t->flow) {
         return;
     }
     uint64_t flags = state_lock();
-    if (f->blocking) {
-        if (f->wait_chan) {
-            wait_list_remove_locked(f);
-        } else if (f->state == FINTE_FLOW_SLEEPING) {
-            sleep_list_remove_locked(f);
+    if (t->blocking) {
+        if (t->wait_chan) {
+            wait_list_remove_locked(t);
+        } else if (t->state == FINTE_THREAD_SLEEPING) {
+            sleep_list_remove_locked(t);
         }
-        f->wake_pending = 1;
+        t->wake_pending = 1;
         state_unlock(flags);
         return;
     }
-    if (f->state == FINTE_FLOW_RUNNING || f->state == FINTE_FLOW_READY ||
-        f->state == FINTE_FLOW_DEAD || f->state == FINTE_FLOW_FREE) {
+    if (t->state == FINTE_THREAD_CREATED || t->state == FINTE_THREAD_RUNNING ||
+        t->state == FINTE_THREAD_READY || t->state == FINTE_THREAD_DEAD ||
+        t->state == FINTE_THREAD_FREE) {
         state_unlock(flags);
         return;
     }
-    if (f->state == FINTE_FLOW_BLOCKED) {
-        wait_list_remove_locked(f);
-    } else if (f->state == FINTE_FLOW_SLEEPING) {
-        sleep_list_remove_locked(f);
+    if (t->state == FINTE_THREAD_BLOCKED) {
+        wait_list_remove_locked(t);
+    } else if (t->state == FINTE_THREAD_SLEEPING) {
+        sleep_list_remove_locked(t);
     }
-    enqueue_locked(f);
-    uint32_t target = f->cpu;
+    enqueue_locked(t);
+    uint32_t target = t->cpu;
     state_unlock(flags);
     if (g_batch) {
         hal_cpu_wake(target);
     }
 }
 
+void finte_sched_wake(fflow_t *f)
+{
+    if (f) {
+        finte_sched_wake_thread(f->thread);
+    }
+}
+
 static int throttle_refill(void)
 {
     uint64_t flags = state_lock();
-    fflow_t *f = finte_core.throttle;
+    fthread_t *t = finte_core.throttle;
     finte_core.throttle = NULL;
     int n = 0;
-    while (f) {
-        fflow_t *next = f->next_throttle;
-        f->next_throttle = NULL;
-        f->fuel = f->fuel_max;
-        enqueue_locked(f);
+    while (t) {
+        fthread_t *next = t->next_throttle;
+        t->next_throttle = NULL;
+        if (t->flow) {
+            t->flow->fuel = t->flow->fuel_max;
+        }
+        enqueue_locked(t);
         n++;
-        f = next;
+        t = next;
     }
     if (n) {
         finte_core.epochs++;
@@ -290,20 +328,20 @@ static int wake_sleepers(void)
     uint64_t now = hal_now_ns();
     uint64_t flags = state_lock();
     int n = 0;
-    fflow_t **pp = &finte_core.sleepers;
+    fthread_t **pp = &finte_core.sleepers;
     while (*pp) {
-        fflow_t *f = *pp;
-        if (now >= f->wake_ns) {
-            *pp = f->next_sleep;
-            f->next_sleep = NULL;
-            if (f->blocking) {
-                f->wake_pending = 1;
+        fthread_t *t = *pp;
+        if (now >= t->wake_ns) {
+            *pp = t->next_sleep;
+            t->next_sleep = NULL;
+            if (t->blocking) {
+                t->wake_pending = 1;
             } else {
-                enqueue_locked(f);
+                enqueue_locked(t);
             }
             n++;
         } else {
-            pp = &f->next_sleep;
+            pp = &t->next_sleep;
         }
     }
     state_unlock(flags);
@@ -313,7 +351,7 @@ static int wake_sleepers(void)
     return n;
 }
 
-/* Timer hook: sleepers must expire even while a CPU-bound flow never yields.
+/* Timer hook: sleepers must expire even while a CPU-bound Flow never yields.
  * Called from the timer IRQ before the preemption decision. */
 void finte_sched_tick(void)
 {
@@ -327,9 +365,9 @@ static uint64_t next_sleep_ns(void)
 {
     uint64_t flags = state_lock();
     uint64_t best = 0;
-    for (fflow_t *f = finte_core.sleepers; f; f = f->next_sleep) {
+    for (fthread_t *t = finte_core.sleepers; t; t = t->next_sleep) {
         uint64_t now = hal_now_ns();
-        uint64_t delta = f->wake_ns > now ? f->wake_ns - now : 0;
+        uint64_t delta = t->wake_ns > now ? t->wake_ns - now : 0;
         if (best == 0 || delta < best) {
             best = delta;
         }
@@ -361,7 +399,7 @@ static int any_blocked(void)
     for (uint32_t i = 0; i < FINTE_MAX_FLOWS; i++) {
         fflow_t *f = &finte_core.flows[i];
         if (f->in_use && f->state == FINTE_FLOW_BLOCKED &&
-            !f->wake_pending) {
+            f->thread && !f->thread->wake_pending) {
             found = 1;
             break;
         }
@@ -370,29 +408,46 @@ static int any_blocked(void)
     return found;
 }
 
-void finte_sched_switch_out(fflow_t *f)
+void finte_sched_switch_out_thread(fthread_t *t)
 {
     fcpu_t *cpu = hal_cpu_self();
-    if (f && cpu->sched_ctx) {
-        hal_ctx_switch(f->ctx, cpu->sched_ctx);
+    if (t && t->ctx && cpu->sched_ctx) {
+        hal_ctx_switch(t->ctx, cpu->sched_ctx);
     }
 }
 
-/* Called from the timer IRQ while f is executing. The scheduler resumes on
- * this CPU's stack, sees READY, and enqueues the flow. */
-void finte_sched_preempt(fflow_t *f)
+void finte_sched_switch_out(fflow_t *f)
 {
-    if (!f) {
+    if (f) {
+        finte_sched_switch_out_thread(f->thread);
+    }
+}
+
+/* Called from the timer IRQ while t is executing. The scheduler resumes on
+ * this CPU's stack, sees READY, and enqueues the Thread. */
+void finte_sched_preempt_thread(fthread_t *t)
+{
+    if (!t) {
         return;
     }
     uint64_t flags = state_lock();
-    if (f->state != FINTE_FLOW_RUNNING) {
+    if (t->state != FINTE_THREAD_RUNNING) {
         state_unlock(flags);
         return;
     }
-    f->state = FINTE_FLOW_READY;
+    t->state = FINTE_THREAD_READY;
+    if (t->flow) {
+        t->flow->state = FINTE_FLOW_READY;
+    }
     state_unlock(flags);
-    finte_sched_switch_out(f);
+    finte_sched_switch_out_thread(t);
+}
+
+void finte_sched_preempt(fflow_t *f)
+{
+    if (f) {
+        finte_sched_preempt_thread(f->thread);
+    }
 }
 
 int finte_sched_active(void)
@@ -409,33 +464,37 @@ int finte_sched_cpu_has_work(void)
     return has;
 }
 
-/* Move a flow to another CPU. Ready flows are removed from one queue and
- * inserted on the target; running/blocked/sleeping flows change affinity and
- * use it on their next enqueue. */
+/* Move a Flow's Thread to another CPU. Ready Threads are removed from one
+ * queue and inserted on the target; running/blocked/sleeping Threads change
+ * affinity and use it on their next enqueue. */
 int finte_sched_migrate(fflow_t *f, uint32_t target)
 {
     if (!f || !f->in_use) {
         return FINTE_ERR_INVAL;
+    }
+    fthread_t *t = f->thread;
+    if (!t || !t->in_use) {
+        return FINTE_ERR_NOENT;
     }
     fcpu_t *to = hal_cpu_slot(target);
     if (!to || !to->online) {
         return FINTE_ERR_NOENT;
     }
     uint64_t flags = state_lock();
-    if (f->cpu == target) {
+    if (t->cpu == target) {
         state_unlock(flags);
         return 0;
     }
-    fcpu_t *from = hal_cpu_slot(f->cpu);
-    if (f->queued && from) {
+    fcpu_t *from = hal_cpu_slot(t->cpu);
+    if (t->queued && from) {
         uint64_t qf = runq_lock(from);
-        runq_remove_locked(from, f);
-        f->queued = 0;
+        runq_remove_locked(from, t);
+        t->queued = 0;
         runq_unlock(from, qf);
     }
-    f->cpu = target;
-    if (f->state == FINTE_FLOW_READY) {
-        enqueue_locked(f);
+    t->cpu = target;
+    if (t->state == FINTE_THREAD_READY) {
+        enqueue_locked(t);
     }
     to->migrations++;
     state_unlock(flags);
@@ -445,9 +504,9 @@ int finte_sched_migrate(fflow_t *f, uint32_t target)
     return 0;
 }
 
-/* Take one ready flow from another CPU without touching the global state
- * lock. The flow is handed directly to the caller for execution. */
-static fflow_t *steal_one(fcpu_t *self)
+/* Take one ready Thread from another CPU without touching the global state
+ * lock. The Thread is handed directly to the caller for execution. */
+static fthread_t *steal_one(fcpu_t *self)
 {
     uint32_t n = hal_cpu_count();
     uint64_t sf = state_lock();
@@ -457,20 +516,20 @@ static fflow_t *steal_one(fcpu_t *self)
             continue;
         }
         uint64_t flags = runq_lock(victim);
-        fflow_t *f = runq_take_locked(victim);
-        if (f && f->stats.slices == 0) {
-            runq_push_locked(victim, f);
-            f = NULL;
+        fthread_t *t = runq_take_locked(victim);
+        if (t && t->flow && t->flow->stats.slices == 0) {
+            runq_push_locked(victim, t);
+            t = NULL;
         }
-        if (f) {
-            f->queued = 0;
-            f->cpu = self->id;
+        if (t) {
+            t->queued = 0;
+            t->cpu = self->id;
             self->steals++;
         }
         runq_unlock(victim, flags);
-        if (f) {
+        if (t) {
             state_unlock(sf);
-            return f;
+            return t;
         }
     }
     state_unlock(sf);
@@ -492,6 +551,7 @@ void finte_sched_reset(void)
         cpu->runq_tail[0] = NULL;
         cpu->runq_tail[1] = NULL;
         cpu->current = NULL;
+        cpu->current_thread = NULL;
         cpu->need_resched = 0;
         runq_unlock(cpu, qf);
     }
@@ -503,39 +563,53 @@ int finte_run_status(void)
     return finte_core.status;
 }
 
-static void finish_ready(fflow_t *f)
+static void finish_ready(fthread_t *t)
 {
+    fflow_t *f = t->flow;
+    if (!f) {
+        return;
+    }
     if (f->fuel == 0) {
-        finte_sched_throttle(f);
+        finte_sched_throttle_thread(t);
     } else {
-        finte_sched_enqueue(f);
+        finte_sched_enqueue_thread(t);
     }
 }
 
-static void finish_dead(fflow_t *f)
+static void finish_dead(fthread_t *t)
 {
+    fflow_t *f = t->flow;
     finte_core.stats.flows_finished++;
-    if (f->ctx) {
-        hal_ctx_destroy(f->ctx);
-        f->ctx = NULL;
+    if (t->ctx) {
+        hal_ctx_destroy(t->ctx);
+        t->ctx = NULL;
     }
-    fhandle_t self = f->self;
-    finte_node_unref(self);
+    fhandle_t self = f ? f->self : FINTE_HANDLE_NONE;
+    if (f) {
+        f->thread = NULL;
+    }
+    finte_thread_release(t);
+    if (finte_handle_valid(self)) {
+        finte_node_unref(self);
+    }
 }
 
-/* Indexed by FINTE_FLOW_*; blocked/sleeping flows stay where they are. */
-static void (*const finish_ops[])(fflow_t *) = {
-    [FINTE_FLOW_READY] = finish_ready,
-    [FINTE_FLOW_DEAD] = finish_dead,
+/* Indexed by FINTE_THREAD_*; blocked/sleeping Threads stay where they are. */
+static void (*const finish_ops[])(fthread_t *) = {
+    [FINTE_THREAD_READY] = finish_ready,
+    [FINTE_THREAD_DEAD] = finish_dead,
 };
 
-static void run_flow(fcpu_t *cpu, fflow_t *f)
+static void run_thread(fcpu_t *cpu, fthread_t *t)
 {
+    fflow_t *f = t->flow;
     cpu->current = f;
+    cpu->current_thread = t;
     cpu->switches++;
     f->state = FINTE_FLOW_RUNNING;
+    t->state = FINTE_THREAD_RUNNING;
 
-    uint32_t q = f->quantum ? f->quantum : FINTE_FUEL_QUANTUM;
+    uint32_t q = t->quantum ? t->quantum : FINTE_FUEL_QUANTUM;
     if (q > f->fuel) {
         q = f->fuel;
     }
@@ -547,36 +621,38 @@ static void run_flow(fcpu_t *cpu, fflow_t *f)
     uint64_t c0 = hal_cycles();
     finte_core.stats.context_switches++;
     hal_timer_start_cpu();
-    hal_ctx_switch(cpu->sched_ctx, f->ctx);
+    hal_ctx_switch(cpu->sched_ctx, t->ctx);
     hal_timer_stop_cpu();
-    f->cycles += hal_cycles() - c0;
+    t->cycles += hal_cycles() - c0;
 
-    if (f->blocking) {
+    if (t->blocking) {
         uint64_t sf = state_lock();
-        f->blocking = 0;
-        if (f->wake_pending) {
-            f->wake_pending = 0;
-            enqueue_locked(f);
-        } else if (f->state == FINTE_FLOW_RUNNING) {
+        t->blocking = 0;
+        if (t->wake_pending) {
+            t->wake_pending = 0;
+            enqueue_locked(t);
+        } else if (t->state == FINTE_THREAD_RUNNING) {
+            t->state = FINTE_THREAD_BLOCKED;
             f->state = FINTE_FLOW_BLOCKED;
         }
         state_unlock(sf);
     }
-    if (f->state < FINTE_ARRAY_SIZE(finish_ops) && finish_ops[f->state]) {
-        finish_ops[f->state](f);
+    if (t->state < FINTE_ARRAY_SIZE(finish_ops) && finish_ops[t->state]) {
+        finish_ops[t->state](t);
     }
     cpu->current = NULL;
+    cpu->current_thread = NULL;
 }
 
 static void sched_loop(fcpu_t *cpu, int owner)
 {
     for (;;) {
-        fflow_t *f = runq_pop_cpu(cpu);
-        if (!f && 0) {
-            f = steal_one(cpu);
+        fthread_t *t = runq_pop_cpu(cpu);
+        if (!t && 0) {
+            t = steal_one(cpu);
         }
-        if (f) {
-            run_flow(cpu, f);
+        if (t) {
+            run_thread(cpu, t);
             continue;
         }
         if (!owner && !g_batch) {

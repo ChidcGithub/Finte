@@ -90,7 +90,9 @@ the POST.
   so a lone compute-bound flow runs without a context switch every 10 ms.
 - **Reschedule IPIs cost more than local scheduling.** IPIs are sent only to
   CPUs parked in HLT with queued work; a wakeup targeting a running CPU waits
-  for its next yield or timer tick. There is no work stealing or migration.
+  for its next yield or timer tick. Migration is implemented; work stealing is
+  implemented but currently disabled, so idle CPUs do not yet pull work from
+  busy queues.
 - **Disk writes avoid redundant trees.** lfc1 tracks a dirty flag, so a
   read-only mount/umount or an explicit `sync` with no changes does not append a
   new tree. The block cache holds 32 4 KiB entries.
