@@ -31,7 +31,9 @@
    | Directory | `READ`, `WRITE`, `CONTROL` |
 
    Current verbs may use `WRITE` for Arena allocation/mapping and `CONTROL` for
-   Flow wait until `MAP`/`WAIT` are added in the native ABI.
+   Flow wait until `MAP`/`WAIT` are added in the native ABI. These masks define
+   the ABI vocabulary; v0.1 still enforces the specific bits in each verb
+   rather than through a central mask validator.
 4. **Derivation is rights-reducing copy.** `CAP_DUP` and `CAP_GRANT` may only
    produce a subset of the source rights. `CAP_GRANT` copies; it does not move.
    There is no move/transfer operation in v0.1.

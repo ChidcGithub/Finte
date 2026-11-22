@@ -18,7 +18,8 @@
 2. **The mapping is valid only while its scoped capability remains held.** The
    process must keep the capability for the mapping's lifetime. Process
    teardown drops capabilities and releases its page tables; the Arena object
-   remains until its node references are gone.
+   remains until its node references are gone. The kernel does not yet unmap on
+   capability drop, so this is a userland contract and a known v0.1 limitation.
 3. **No unmap or mapped-page revocation in v0.1.** These require a mapping
    reference and TLB-shootdown contract. They are deferred to v0.2.
 4. **The backing pages are freed when the Arena node is destroyed.** Destruction
