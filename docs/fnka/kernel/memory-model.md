@@ -186,4 +186,8 @@ The target contract requires:
 - `procs` / `services`: private page tables, shared page, Arena page caps,
   user copy validation and fault kill.
 - `make qemu-disk-test`: filesystem-backed reads and writes.
-- No arm64 MMU, user mapping or TLB test yet.
+- `make test`: PMM map consumption, allocation/free, reservation and clamping.
+- `make arm64-test`: MMU identity translations for kernel and device addresses,
+  GICv2 timer ticks, 4-CPU PSCI startup and per-CPU flow distribution.
+- `make arm64-uefi-test`: same checks plus PMM counts from the UEFI memory map.
+- No arm64 user mapping, TLB-shootdown or reclaim test yet.
