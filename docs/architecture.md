@@ -415,8 +415,8 @@ Finte does not use GRUB. One hybrid raw image contains two independent boot path
   `Shift+Up/Down`, `Home`/`End` and the PS/2 wheel move the view; any other key
   returns to live. While scrolled, the bottom row is a status bar and the VGA
   cursor is hidden.
-- Once POST passes, the shell prints `Finte (base) 0.0.1` immediately before the
-  motd line `Welcome to Finte.` The version (`0.0.1`) and nickname (`base`) come
+- Once POST passes, the shell prints `Finte (base) 0.0.2` immediately before the
+  motd line `Welcome to Finte.` The version (`0.0.2`) and nickname (`base`) come
   from `base.h`.
 - The optional Multiboot ELF (`make kernel-elf`) is a development fallback only.
 
@@ -612,11 +612,11 @@ firmware-call window. Platform-specific boot data and UEFI hooks live in
 The trade-offs are equally explicit: preemptive but coarse-grained SMP (a
 global core lock), static flow affinity, one shared user address space, static
 table limits, no demand paging, append-only lfc1, and a small Linux subset.
-These are the boundaries of v0.0.1, not accidents.
+These are the boundaries of v0.0.2, not accidents.
 
 ## 15. Comparison with Linux
 
-| concern | Linux | Finte v0.0.1 |
+| concern | Linux | Finte v0.0.2 |
 | --- | --- | --- |
 | authority | uid/gid + mode/ACL + namespaces | capability per object + rights |
 | process model | fork/exec, process tree | immutable flow image, explicit graph |

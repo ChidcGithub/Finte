@@ -11,7 +11,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 hash=$(git rev-parse --short=7 HEAD)
-version="${1:-0.0.1-$hash}"
+version="${1:-0.0.2-$hash}"
 case "$version" in
     v*) tag="$version" ;;
     *)  tag="v$version" ;;

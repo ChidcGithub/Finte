@@ -2,6 +2,21 @@
 
 Short notes only. GitHub releases carry the per-commit changes.
 
+## 2026-11-22 — 0.0.2
+- Version bumped to 0.0.2.
+- Shared PMM now backs flow stacks and process page tables, with a host
+  churn/fragmentation test and stable-free teardown checks.
+- arm64 EL0 user mode: per-process L0/L1/L2/L3 tables, TTBR0 switching,
+  `svc #0` syscalls, user-fault kill, embedded initrd, `init.elf` and the
+  four-process `procs` demo.
+- arm64 virtio-mmio block driver (legacy v1 and modern v2) with direct and
+  AAVMF lfc1/ext4/NTFS tests.
+- CTR_EL0-based arm64 D-cache clean/I-cache invalidation for MMU tables and AP
+  startup; the UEFI loader uses the same line sizes.
+- Fixed x86 flow-stack PMM accounting, shell file-buffer frees and the POST
+  probe page leak.
+- Host suite is now 23 tests; arm64 user mode and disk checks run in CI.
+
 ## 2026-11-22 — Boot Protocol v1
 - One validated `fboot_info` structure for x86 BIOS, x86 UEFI and arm64 UEFI.
 - BIOS E820 memory map and ramdisk module; UEFI memory map, ACPI/DTB, modules

@@ -155,7 +155,7 @@ Target rules:
 - the native ABI version is independent of the kernel release version;
 - syscall numbers are never reused for different semantics.
 
-The current kernel version (`0.0.1`) is not an ABI version. Boot info has a
+The current kernel version (`0.0.2`) is not an ABI version. Boot info has a
 `version` field; the verb table does not.
 
 ## 8. Linux persona

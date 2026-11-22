@@ -20,7 +20,7 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 
 ## Status
 
-- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 23 self-tests passing on Linux/WSL and Windows.
+- **v0.0.2** (nickname **base**), built as `0.0.2-<short commit>`, 23 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, PE32+ UEFI loaders for x86_64 and arm64, and FAT ESPs. `make images` produces x86_64 BIOS/UEFI hybrid media and arm64 UEFI ISO/IMG media.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
@@ -93,12 +93,12 @@ make qemu-arm64     # interactive 4-CPU arm64 serial console
 python3 tools/lfc1ck.py build/disk-test.img --list
 ```
 
-Builds inside a git checkout report `0.0.1-<7-char commit>`; without git they
-fall back to `0.0.1`. Pushing to `main` runs the build workflow but does not
+Builds inside a git checkout report `0.0.2-<7-char commit>`; without git they
+fall back to `0.0.2`. Pushing to `main` runs the build workflow but does not
 release. To publish a stable version, tag the current commit:
 
 ```bash
-sh tools/tag_release.sh 0.0.1
+sh tools/tag_release.sh 0.0.2
 ```
 
 The release workflow publishes the x86_64 and arm64 ISO/IMG media plus
@@ -266,7 +266,7 @@ The kernel refuses to start user work until the core passes its POST:
 
 [    4.431100] Finte shell. Type 'help' for commands.
 [    4.445840] boot: custom BIOS loader
-[    4.466978] Finte (base) 0.0.1
+[    4.466978] Finte (base) 0.0.2
 [    4.494982] Welcome to Finte.
 ```
 

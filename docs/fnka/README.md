@@ -53,7 +53,7 @@ Flow Group is an optional organization layer:
 
 ## Current baseline
 
-- Version: `0.0.1`, built as `0.0.1-<short commit>`.
+- Version: `0.0.2`, built as `0.0.2-<short commit>`.
 - Architectures: x86_64 and AArch64.
 - Primary validation: QEMU x86_64 (SeaBIOS and OVMF) and QEMU AArch64
   `virt` (direct ELF and AAVMF).

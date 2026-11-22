@@ -15,7 +15,7 @@
 
 #define FINTE_VERSION_MAJOR 0
 #define FINTE_VERSION_MINOR 0
-#define FINTE_VERSION_PATCH 1
+#define FINTE_VERSION_PATCH 2
 
 /* The build generates build/finte_version.h with a short commit suffix.
  * Tools that compile the headers directly keep the plain fallback. */
@@ -25,7 +25,7 @@
 #endif
 #endif
 #ifndef FINTE_VERSION_STRING
-#define FINTE_VERSION_STRING "0.0.1"
+#define FINTE_VERSION_STRING "0.0.2"
 #endif
 #define FINTE_NICKNAME "base"
 
