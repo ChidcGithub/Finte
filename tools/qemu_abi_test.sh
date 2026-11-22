@@ -21,7 +21,7 @@ run_once() {
         -drive format=raw,file=build/finte.img,if=ide,index=0,media=disk \
         -boot c -display none -monitor none -no-reboot -snapshot \
         -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-        -serial stdio -D "$QEMULOG" < "$FIFO" > "$LOG" 2>&1 &
+        -serial stdio -D "$QEMULOG" -d guest_errors < "$FIFO" > "$LOG" 2>&1 &
     local qpid=$!
     exec 3<>"$FIFO"  # open both ends so startup cannot block the script
 
@@ -63,7 +63,7 @@ run_once() {
     qstatus=$?
     echo "qemu pass=$pass status=$qstatus" >> "$LOG"
     rm -f "$FIFO"
-    if [ "$pass" -eq 0 ] && [ "$qstatus" -ne 0 ]; then
+    if [ "$pass" -eq 0 ]; then
         {
             echo "--- QEMU diagnostics ---"
             uname -m
@@ -73,6 +73,10 @@ run_once() {
             timeout 3 qemu-system-x86_64 -machine pc -accel tcg -display none \
                 -serial none -monitor none -no-reboot -S >/dev/null 2>&1
             echo "minimal qemu probe status: $?"
+            if [ -s "$QEMULOG" ]; then
+                echo "--- QEMU internal log ---"
+                tail -60 "$QEMULOG" | tr -d '\000' | sed 's/\x1b\[[0-9;]*m//g'
+            fi
         } >> "$LOG"
     fi
     grep -q "abi: PASS" "$LOG" &&
