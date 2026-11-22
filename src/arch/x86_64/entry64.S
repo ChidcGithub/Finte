@@ -6,6 +6,9 @@
 _start64:
     cli
     cld
+    mov $0x3f8, %dx
+    mov $'K', %al
+    out %al, %dx
 
     /* BIOS stage2 already installed flat data selectors. UEFI has its own
      * valid long-mode selectors; segment bases are ignored in long mode, so

@@ -362,8 +362,20 @@ serial_puts:
     ret
 
 /* 32-bit setup, kernel relocation, paging, long mode. */
+.macro serput ch
+    mov dx, 0x3F8 + 5
+1:
+    in al, dx
+    test al, 0x20
+    jz 1b
+    mov dx, 0x3F8
+    mov al, \ch
+    out dx, al
+.endm
+
 .code32
 pm_entry:
+    serput 'M'
     mov ax, 0x10
     mov ds, ax
     mov es, ax
@@ -377,7 +389,7 @@ pm_entry:
     mov ecx, [BOOTINFO_ADDR + 0x08]
     cld
     rep movsb
-    mov al, 'C'
+    serput 'C'
 
     /* Clear PML4, PDPT and PD at 0x70000..0x72FFF. */
     mov edi, 0x70000
@@ -414,7 +426,7 @@ pm_entry:
     or eax, 0x80000001
     mov cr0, eax
 
-    mov al, 'L'
+    serput 'L'
     mov edi, BOOTINFO_ADDR
     mov esi, 0xF17E0001
     .att_syntax
