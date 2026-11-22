@@ -327,8 +327,9 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 - UEFI disk manager: AHCI, MBR, mount/read/fsinfo/umount for lfc1, ext4 and
   NTFS from `hd1`; writable lfc1.
 - x86_64 process ABI: 1 CPU, fd table, anonymous mmap, fork with fd
-  inheritance, exec, SIGUSR1 delivery, user-to-user cap transfer, churn with
-  PMM stability, blocked-flow abort and RX/RW-NX PTE checks.
+  inheritance, exec, SIGUSR1 delivery, user-to-user cap transfer, service
+  registry, ET_DYN shared-object load, churn with PMM stability, blocked-flow
+  abort and RX/RW-NX PTE checks.
 - arm64 direct QEMU `virt`: MMU identity translations, GICv2 timer ticks,
   4-CPU PSCI startup, per-CPU flow hits, EL0 `init.elf`, the four-process
   `procs` IPC/preemption/fault demo, the same process ABI suite on 4 CPUs and

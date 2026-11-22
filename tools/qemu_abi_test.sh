@@ -12,7 +12,7 @@ run_once() {
         -boot c -display none -serial stdio -monitor none -no-reboot \
         > "$LOG" 2>&1 || true
     grep -q "abi: PASS" "$LOG" &&
-        grep -Fq "abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK bad=OK churn=OK blocked=OK" "$LOG"
+        grep -Fq "abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" "$LOG"
 }
 
 if run_once || { echo "x86 process ABI test: retrying after a boot-time scheduler timeout"; run_once; }; then

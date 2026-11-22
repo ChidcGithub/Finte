@@ -12,7 +12,8 @@ Short notes only. GitHub releases carry the per-commit changes.
 - Added arm64 ASID allocation/invalidation and RX/RW-NX user mappings on both
   architectures.
 - Added the x86_64 `abi-test` and extended the arm64 boot tests with the shared
-  process ABI suite.
+  process ABI suite, including a capability service registry and fixed-address
+  ET_DYN shared-object loading.
 - Host suite is now 24 tests, including address-space refcount/lifetime and
   RX/RW-NX checks.
 

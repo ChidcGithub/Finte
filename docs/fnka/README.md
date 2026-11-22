@@ -83,7 +83,7 @@ Flow Group is an optional organization layer:
 | Boot handoff | Implemented | Parse ACPI/DTB in platform services | `boot.h`, `bootinfo.c`, three producers; PMM consumes the map |
 | Kernel/user boundary | Partial | Small kernel, isolated drivers/services | `src/core/process.c` + x86/arm64 arch backends |
 | Driver framework | Partial | Hybrid kernel/user drivers | in-kernel block/filesystem code |
-| Native ABI | Partial | Stable Finte ABI and native libc | verb ABI; fd table, mmap, fork, exec, signals and cap transfer on both arches |
+| Native ABI | Partial | Stable Finte ABI and native libc | verb ABI; fd table, mmap, fork, exec, signals, cap transfer, service registry and ET_DYN load on both arches |
 | Security model | Partial | Capability revocation, DMA isolation, measured TCB | this directory |
 | Tests | Partial | Full cross-architecture semantic matrix | 24 host, x86 BIOS/UEFI/disk + 1-CPU ABI, arm64 MMU/timer/SMP/user/ABI/disk direct + UEFI |
 

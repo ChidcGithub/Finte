@@ -43,7 +43,7 @@ ARM64_USER_CFLAGS := --target=$(ARM64_TARGET) -std=c11 -O2 -ffreestanding \
                      -fno-unwind-tables -fno-asynchronous-unwind-tables \
                      -mno-outline-atomics -mgeneral-regs-only -mstrict-align \
                      -Wall -Wextra
-USER_PROGS := init ipc abi fork exec signal kill cap bad exit block
+USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn exit block
 USER_ELF := $(addprefix $(BUILD)/,$(addsuffix .elf,$(USER_PROGS)))
 ARM64_USER_ELF := $(addprefix $(BUILD)/arm64/,$(addsuffix .elf,$(USER_PROGS)))
 
@@ -53,7 +53,7 @@ CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c sr
             src/core/demo.c src/core/guest_linux.c src/core/selftest.c src/core/initrd.c \
             src/core/disk.c src/core/lfc1.c src/core/ext4.c src/core/ntfs.c src/core/file.c \
             src/core/lock.c src/core/cas.c src/core/ansi.c src/core/watchdog.c \
-            src/core/bootinfo.c src/core/pmm.c src/core/process.c
+            src/core/bootinfo.c src/core/pmm.c src/core/process.c src/core/service.c
 HOST_SRC := $(CORE_SRC) src/host/hal_host.c src/host/blk_host.c src/host/process_host.c \
             src/host/main.c src/host/bench.c src/tests/test_main.c
 
@@ -105,9 +105,18 @@ $(BUILD)/arm64/%.elf: src/user/%.c src/user/syscall.h src/user/user_arm64.ld
 	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c $< -o $(BUILD)/arm64/$*.o
 	$(ARM64_LD) -T src/user/user_arm64.ld -o $@ $(BUILD)/arm64/$*.o
 
-$(BUILD)/arm64/initrd.bin: $(ARM64_USER_ELF) tools/mkinitrd.py
+$(BUILD)/arm64/libsvc.so: src/user/libsvc.c src/user/libsvc_arm64.ld
+	@mkdir -p $(BUILD)/arm64
+	$(ARM64_CC) $(ARM64_USER_CFLAGS) -fPIC -c src/user/libsvc.c \
+	  -o $(BUILD)/arm64/libsvc.o
+	$(ARM64_LD) -shared -nostdlib -T src/user/libsvc_arm64.ld \
+	  -o $@ $(BUILD)/arm64/libsvc.o
+
+$(BUILD)/arm64/initrd.bin: $(ARM64_USER_ELF) $(BUILD)/arm64/libsvc.so \
+                           tools/mkinitrd.py
 	$(PYTHON) tools/mkinitrd.py --dir src/ramdisk --out $@ \
-	  $(foreach p,$(USER_PROGS),--extra $(p).elf=$(BUILD)/arm64/$(p).elf)
+	  $(foreach p,$(USER_PROGS),--extra $(p).elf=$(BUILD)/arm64/$(p).elf) \
+	  --extra libsvc.so=$(BUILD)/arm64/libsvc.so
 
 $(BUILD)/arm64/initrd_blob.c: $(BUILD)/arm64/initrd.bin tools/mkbinarray.py
 	$(PYTHON) tools/mkbinarray.py $< $@ initrd_bin
@@ -133,7 +142,7 @@ arm64-test: arm64
 	    grep -q "arm64 user: init.elf PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 procs: PASS" $(BUILD)/arm64.log && \
 	    grep -q "arm64 abi: PASS" $(BUILD)/arm64.log && \
-	    grep -Fq "abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK bad=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
+	    grep -Fq "abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" $(BUILD)/arm64.log && \
 	    grep -Fq "procs] ipc=OK isolation=OK shm=OK arena=OK time=OK preempt=OK fault=OK" $(BUILD)/arm64.log; then \
 	  echo "arm64 boot test: OK"; \
 	else \
@@ -181,7 +190,7 @@ bootloader: $(BUILD)/boot.bin $(BUILD)/stage2.bin
 
 initrd: $(BUILD)/initrd.bin
 
-user: $(USER_ELF)
+user: $(USER_ELF) $(BUILD)/libsvc.so
 
 $(BUILD)/finte: $(HOST_SRC) $(HEADERS) $(VERSION_HEADER)
 	@mkdir -p $(BUILD)
@@ -237,10 +246,18 @@ $(BUILD)/uefi/BOOTX64.EFI: $(BUILD)/uefi/loader.obj $(BUILD)/uefi/jump.obj
 	$(LLD_LINK) /nologo /subsystem:efi_application /entry:efi_main \
 	  /nodefaultlib /out:$@ $^
 
-$(BUILD)/initrd.bin: $(wildcard src/ramdisk/*) $(USER_ELF) tools/mkinitrd.py
+$(BUILD)/initrd.bin: $(wildcard src/ramdisk/*) $(USER_ELF) \
+                     $(BUILD)/libsvc.so tools/mkinitrd.py
 	@mkdir -p $(BUILD)
 	$(PYTHON) tools/mkinitrd.py --dir src/ramdisk --out $@ \
-	  $(foreach p,$(USER_PROGS),--extra $(p).elf=$(BUILD)/$(p).elf)
+	  $(foreach p,$(USER_PROGS),--extra $(p).elf=$(BUILD)/$(p).elf) \
+	  --extra libsvc.so=$(BUILD)/libsvc.so
+
+$(BUILD)/libsvc.so: src/user/libsvc.c src/user/libsvc_x86.ld
+	@mkdir -p $(BUILD)
+	$(CC) $(USER_CFLAGS) -fPIC -c src/user/libsvc.c -o $(BUILD)/libsvc.o
+	$(LD) -m elf_x86_64 -shared -nostdlib -T src/user/libsvc_x86.ld \
+	  -o $@ $(BUILD)/libsvc.o
 
 $(BUILD)/%.elf: src/user/%.c src/user/syscall.h src/user/user.ld
 	@mkdir -p $(BUILD)

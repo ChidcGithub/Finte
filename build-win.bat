@@ -37,7 +37,7 @@ if not exist "%CLANGCL%" set "CLANGCL=clang-cl"
     src\core\demo.c src\core\guest_linux.c src\core\selftest.c src\core\initrd.c ^
     src\core\disk.c src\core\lfc1.c src\core\ext4.c src\core\ntfs.c src\core\file.c src\core\lock.c ^
     src\core\cas.c src\core\ansi.c src\core\watchdog.c src\core\bootinfo.c src\core\pmm.c ^
-    src\core\process.c ^
+    src\core\process.c src\core\service.c ^
     src\host\hal_host.c src\host\blk_host.c src\host\process_host.c ^
     src\host\main.c src\host\bench.c src\tests\test_main.c ^
     /Fe:build\finte.exe

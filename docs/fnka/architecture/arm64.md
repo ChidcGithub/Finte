@@ -137,7 +137,7 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
 | SMP startup | Implemented (PSCI CPU_ON, 4 CPUs) |
 | User mode | Implemented (EL0, `svc #0`, shared process ABI) |
 | User address space | Implemented (4–5 GiB, per-process TTBR0 + ASID) |
-| Process ABI | Partial (fd table, mmap, fork, exec, SIGUSR1, cap transfer) |
+| Process ABI | Partial (fd table, mmap, fork, exec, SIGUSR1, cap transfer, service registry, ET_DYN load) |
 | Block devices | Implemented (virtio-mmio legacy + modern) |
 | ACPI / Device Tree parsing | Missing (pointers passed only) |
 | GICv3 | Missing |
@@ -178,8 +178,9 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 - `make arm64-test`: QEMU `virt`, 4 CPUs, MMU identity translations, GICv2
   timer ticks, SMP flow distribution, `init.elf` at EL0, the full
   `procs` IPC/shared-memory/arena/time/preemption/fault demo, and the shared
-  process ABI suite (fd table, mmap, fork, exec, signal, cap transfer, churn,
-  blocked-flow abort) plus 147 core checks, PASS.
+  process ABI suite (fd table, mmap, fork, exec, signal, cap transfer,
+  service registry, ET_DYN load, churn, blocked-flow abort) plus 147 core
+  checks, PASS.
 - `make arm64-uefi-test`: AAVMF ISO, boot protocol v1, PMM, MMU, GICv2, timer
   ticks, 4 CPUs, `hits=2/2/2/2`, `init.elf`, `procs` and the full ABI suite,
   PASS.

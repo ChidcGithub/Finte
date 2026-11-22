@@ -7,6 +7,7 @@
 #include "finte/finte.h"
 #include "finte/initrd.h"
 #include "finte/process.h"
+#include "finte/service.h"
 #include "finte/verb.h"
 
 typedef struct __attribute__((packed)) elf64_ehdr {
@@ -457,6 +458,79 @@ static int proc_load_elf(faddr_space_t *as, const char *name, uint64_t *entry)
     return 0;
 }
 
+static int proc_load_shared(faddr_space_t *as, const char *name,
+                            uint64_t *entry)
+{
+    int idx = finte_initrd_find(name);
+    if (idx < 0) {
+        return FINTE_ERR_NOENT;
+    }
+    const uint8_t *image = (const uint8_t *)finte_initrd_data((uint32_t)idx);
+    uint32_t size = finte_initrd_size((uint32_t)idx);
+    if (size < sizeof(elf64_ehdr_t) || image[0] != 0x7F ||
+        image[1] != 'E' || image[2] != 'L' || image[3] != 'F' ||
+        image[4] != 2 || image[5] != 1) {
+        return FINTE_ERR_TYPE;
+    }
+    const elf64_ehdr_t *eh = (const elf64_ehdr_t *)image;
+    if (eh->machine != as->ops->elf_machine || eh->type != 3 ||
+        eh->phentsize < sizeof(elf64_phdr_t)) {
+        return FINTE_ERR_TYPE;
+    }
+    for (uint16_t i = 0; i < eh->phnum; i++) {
+        uint64_t off = eh->phoff + (uint64_t)i * eh->phentsize;
+        if (off + sizeof(elf64_phdr_t) > size) {
+            return FINTE_ERR_IO;
+        }
+        const elf64_phdr_t *ph = (const elf64_phdr_t *)(image + off);
+        if (ph->type != 1 || ph->memsz == 0) {
+            continue;
+        }
+        if (ph->vaddr < FPROC_USER_BASE ||
+            ph->vaddr + ph->memsz > FPROC_USER_LIMIT ||
+            ph->offset + ph->filesz > size) {
+            return FINTE_ERR_RANGE;
+        }
+        uint32_t prot = FPROC_PROT_READ;
+        if (ph->flags & 2u) {
+            prot |= FPROC_PROT_WRITE;
+        }
+        if (ph->flags & 1u) {
+            prot |= FPROC_PROT_EXEC;
+        }
+        uint64_t done = 0;
+        while (done < ph->memsz) {
+            uint64_t va = ph->vaddr + done;
+            uint64_t page = va & ~0xFFFull;
+            uint64_t pa = finte_as_translate(as, page, 0);
+            if (pa == 0) {
+                void *fresh = finte_as_alloc_page(as);
+                if (!fresh) {
+                    return FINTE_ERR_NOMEM;
+                }
+                pa = (uint64_t)(uintptr_t)fresh;
+                if (finte_as_map(as, page, pa, prot) != 0) {
+                    finte_as_free_page(as, fresh);
+                    return FINTE_ERR_NOMEM;
+                }
+            }
+            uint64_t page_off = va - page;
+            uint64_t chunk = 4096u - page_off;
+            if (chunk > ph->memsz - done) {
+                chunk = ph->memsz - done;
+            }
+            uint8_t *dst = (uint8_t *)(uintptr_t)(pa + page_off);
+            for (uint64_t j = 0; j < chunk; j++) {
+                uint64_t src = done + j;
+                dst[j] = src < ph->filesz ? image[ph->offset + src] : 0;
+            }
+            done += chunk;
+        }
+    }
+    *entry = eh->entry ? eh->entry : 0x120000000ull;
+    return 0;
+}
+
 static int proc_map_stack(faddr_space_t *as)
 {
     for (uint32_t i = 0; i < FPROC_STACK_PAGES; i++) {
@@ -900,6 +974,7 @@ void finte_proc_destroy(fproc_t *p)
         }
     }
     proc_table_remove(p);
+    finte_service_owner_exit(p->pid);
     if (p->flow && p->flow->space == p->space) {
         if (!p->flow->started) {
             finte_as_unref(p->flow->space);
@@ -1179,6 +1254,40 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
     }
     if (nr == FPROC_SYS_WRITE_FD) {
         return (uint64_t)fd_write_syscall(p, a0, a1, a2);
+    }
+    if (nr == FPROC_SYS_DYNSVC) {
+        if (!p || a1 == 0 || a1 >= FINTE_NAME_MAX) {
+            return (uint64_t)-1;
+        }
+        char name[FINTE_NAME_MAX];
+        if (proc_copy_in(p->space, name, a0, (size_t)a1) != 0) {
+            return (uint64_t)-1;
+        }
+        name[a1] = 0;
+        uint64_t entry = 0;
+        if (proc_load_shared(p->space, name, &entry) != 0) {
+            return (uint64_t)-1;
+        }
+        return entry;
+    }
+    if (nr == FPROC_SYS_SERVICE_REG || nr == FPROC_SYS_SERVICE_LOOK ||
+        nr == FPROC_SYS_SERVICE_UNREG) {
+        if (!p || a1 == 0 || a1 >= FINTE_NAME_MAX) {
+            return (uint64_t)-1;
+        }
+        char name[FINTE_NAME_MAX];
+        if (proc_copy_in(p->space, name, a0, (size_t)a1) != 0) {
+            return (uint64_t)-1;
+        }
+        name[a1] = 0;
+        if (nr == FPROC_SYS_SERVICE_REG) {
+            return (uint64_t)finte_service_register(p, name, (uint16_t)a2);
+        }
+        if (nr == FPROC_SYS_SERVICE_LOOK) {
+            int slot = finte_service_lookup(p, name);
+            return slot < 0 ? (uint64_t)-1 : (uint64_t)slot;
+        }
+        return (uint64_t)finte_service_unregister(p, name);
     }
     if (nr == FPROC_SYS_WRITE) {
         if (a1 > 1024u * 1024u) {
@@ -1828,6 +1937,62 @@ static int proc_cap_test(void)
     return ok ? 0 : FINTE_ERR_STATE;
 }
 
+static int proc_service_test(void)
+{
+    proc_begin();
+    fhandle_t req = finte_channel_create("svc-echo", 4);
+    fhandle_t rep = finte_channel_create("svc-echo-reply", 4);
+    fhandle_t own = finte_channel_create("svc-self", 4);
+    if (!finte_handle_valid(req) || !finte_handle_valid(rep) ||
+        !finte_handle_valid(own)) {
+        if (finte_handle_valid(req)) {
+            finte_node_unref(req);
+        }
+        if (finte_handle_valid(rep)) {
+            finte_node_unref(rep);
+        }
+        if (finte_handle_valid(own)) {
+            finte_node_unref(own);
+        }
+        return FINTE_ERR_NOMEM;
+    }
+    fproc_t *provider = finte_proc_create("svc-provider", "svc.elf", 1, 0,
+                                          req, FINTE_R_SEND | FINTE_R_RECV,
+                                          0, 0, 0);
+    fproc_t *client = finte_proc_create("svc-client", "svc_client.elf", 2, 0,
+                                        own, FINTE_R_SEND | FINTE_R_RECV,
+                                        0, 0, 0);
+    int ok = 0;
+    if (provider && client && provider->flow && client->flow) {
+        /* Two channels keep request and reply directions apart, so a fast
+         * client cannot consume its own request on an SMP boot. Register the
+         * provider before either flow starts so lookup is deterministic. */
+        ok = finte_cap_install(provider->flow, rep,
+                               FINTE_R_SEND | FINTE_R_RECV) == 1 &&
+             finte_service_register(provider, "echo", 0) == 0 &&
+             finte_service_register(provider, "echo-reply", 1) == 0;
+        if (ok && finte_proc_start(provider) == 0 &&
+            finte_proc_start(client) == 0) {
+            finte_run();
+            finte_as_switch_kernel();
+            ok = !provider->faulted && !client->faulted &&
+                 provider->exit_code == 0 && client->exit_code == 0 &&
+                 finte_service_count() == 2;
+        } else {
+            ok = 0;
+        }
+    }
+    finte_proc_destroy(provider);
+    finte_proc_destroy(client);
+    if (finte_service_count() != 0) {
+        ok = 0;
+    }
+    finte_node_unref(req);
+    finte_node_unref(rep);
+    finte_node_unref(own);
+    return ok ? 0 : FINTE_ERR_STATE;
+}
+
 static int proc_signal_test(void)
 {
     proc_begin();
@@ -1890,7 +2055,10 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage signal done\n", 25);
     int cap_rc = proc_cap_test();
     hal_console_write("[abi] stage cap done\n", 22);
+    int svc_rc = proc_service_test();
+    hal_console_write("[abi] stage service done\n", 26);
     int bad_rc = finte_usermode_run("bad.elf");
+    int dyn_rc = finte_usermode_run("dyn.elf");
     int churn_rc = finte_proc_churn(8);
 
     /* A process blocked in ipc_recv must keep its space alive until aborted,
@@ -1919,16 +2087,17 @@ int finte_proc_abi_test(void)
     char buf[192];
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s exec=%s signal=%s "
-                         "cap=%s bad=%s churn=%s blocked=%s\n",
+                         "cap=%s service=%s bad=%s dyn=%s churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(cap_rc == 0),
-                         ok_str(bad_rc == 0), ok_str(churn_rc == 0),
+                         ok_str(svc_rc == 0), ok_str(bad_rc == 0),
+                         ok_str(dyn_rc == 0), ok_str(churn_rc == 0),
                          ok_str(blocked_ok));
     if (n > 0) {
         hal_console_write(buf, (size_t)n);
     }
     return (space_ok && abi == 0 && fork_rc == 0 && exec_rc == 0 &&
-            sig_rc == 0 && cap_rc == 0 && bad_rc == 0 && churn_rc == 0 &&
-            blocked_ok) ? 0 : FINTE_ERR_STATE;
+            sig_rc == 0 && cap_rc == 0 && svc_rc == 0 && bad_rc == 0 &&
+            dyn_rc == 0 && churn_rc == 0 && blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

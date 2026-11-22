@@ -54,6 +54,8 @@ on the firmware TCR.
 | `0x104000000` | `FPROC_STACK_TOP`, user stack top |
 | `0x108000000` | `FPROC_SHARED_VA`, shared page |
 | `0x10C000000` | `FPROC_ARENA_VA`, mapped Arena range |
+| `0x110000000` | `FPROC_MMAP_BASE`, anonymous mmap range |
+| `0x120000000` | fixed ET_DYN shared-object load window |
 | `0x140000000` (5 GiB) | `FPROC_USER_LIMIT` |
 
 Each user process gets a private PML4:

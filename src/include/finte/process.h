@@ -57,6 +57,10 @@
 #define FPROC_SYS_SIGNAL       12
 #define FPROC_SYS_SIGRETURN    13
 #define FPROC_SYS_WRITE_FD     14
+#define FPROC_SYS_SERVICE_REG  15
+#define FPROC_SYS_SERVICE_LOOK 16
+#define FPROC_SYS_SERVICE_UNREG 17
+#define FPROC_SYS_DYNSVC       18
 #define FPROC_SYS_GETPID       39
 #define FPROC_SYS_EXIT         60
 #define FPROC_SYS_TIME         200
