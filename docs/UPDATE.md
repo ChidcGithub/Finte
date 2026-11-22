@@ -86,6 +86,9 @@ Short notes only. GitHub releases carry the per-commit changes.
   four-process demo, `init.elf` and a CPU/disk/mount report, then prints
   `[hw] PASS`; the CLI boot test now executes it. The actual physical-laptop
   run remains a manual step and is recorded as pending in the results table.
+- Recorded a VMware Workstation UEFI run from `Finte-UEFI.vmx`: `[hw] PASS`
+  with the 147 checks, procs demo and `init.elf` at 2 vCPUs. The bare-metal
+  x86_64 row remains pending.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.
