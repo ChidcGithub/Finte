@@ -1280,10 +1280,15 @@ void finte_user_fault(uint64_t vec, uint64_t rip, uint64_t cr2)
     finte_flow_exit(f, 128 + (int)vec);
 }
 
+static void proc_timer_poll(fproc_t *p);
+
 /* Run pending signals on the way back to user mode. The arch frame remains
  * owned by the trap handler; this only mutates it. */
 void finte_process_signal_check(fproc_t *p, void *frame)
 {
+    if (p) {
+        proc_timer_poll(p);
+    }
     if (!p || !frame || p->sig_frame == NULL) {
         return;
     }
@@ -1655,6 +1660,171 @@ static uint64_t sys_getpgrp(fproc_t *p)
     return p ? (uint64_t)p->pgid : 0;
 }
 
+/* POSIX interval timers, ITIMER_REAL only. The scheduler tick calls
+ * finte_proc_timer_tick(), which arms SIGALRM; handlers and masks are the
+ * normal signal path. */
+typedef struct {
+    int64_t tv_sec;
+    int64_t tv_usec;
+} proc_timeval_t;
+
+typedef struct {
+    proc_timeval_t interval;
+    proc_timeval_t value;
+} proc_itimerval_t;
+
+static int proc_timeval_ns(const proc_timeval_t *tv, uint64_t *out)
+{
+    if (!tv || !out || tv->tv_sec < 0 || tv->tv_usec < 0 ||
+        tv->tv_usec >= 1000000) {
+        return -1;
+    }
+    uint64_t sec = (uint64_t)tv->tv_sec;
+    if (sec > (~0ull - 999999ull * 1000ull) / 1000000000ull) {
+        return -1;
+    }
+    *out = sec * 1000000000ull + (uint64_t)tv->tv_usec * 1000ull;
+    return 0;
+}
+
+static void proc_timer_snapshot(fproc_t *p, proc_itimerval_t *out)
+{
+    finte_memset(out, 0, sizeof(*out));
+    uint64_t now = hal_now_ns();
+    uint64_t flags = proc_lock();
+    uint64_t expire = p ? p->timer_expire_ns : 0;
+    uint64_t interval = p ? p->timer_interval_ns : 0;
+    proc_unlock(flags);
+    if (expire) {
+        uint64_t delta = expire > now ? expire - now : 0;
+        uint64_t us = (delta + 999ull) / 1000ull;
+        out->value.tv_sec = (int64_t)(us / 1000000ull);
+        out->value.tv_usec = (int64_t)(us % 1000000ull);
+    }
+    out->interval.tv_sec = (int64_t)(interval / 1000000000ull);
+    out->interval.tv_usec = (int64_t)((interval % 1000000000ull) / 1000ull);
+}
+
+static int sys_getitimer(fproc_t *p, uint64_t which, uint64_t old_uva)
+{
+    if (!p || !p->space || which != 0 || old_uva == 0) {
+        return -1;
+    }
+    proc_itimerval_t old;
+    proc_timer_snapshot(p, &old);
+    return proc_copy_out(p->space, old_uva, &old, sizeof(old));
+}
+
+static int sys_setitimer(fproc_t *p, uint64_t which, uint64_t new_uva,
+                         uint64_t old_uva)
+{
+    if (!p || !p->space || which != 0) {
+        return -1;
+    }
+    proc_itimerval_t nv;
+    uint64_t value = 0;
+    uint64_t interval = 0;
+    if (new_uva != 0) {
+        if (proc_copy_in(p->space, &nv, new_uva, sizeof(nv)) != 0 ||
+            proc_timeval_ns(&nv.value, &value) != 0 ||
+            proc_timeval_ns(&nv.interval, &interval) != 0) {
+            return -1;
+        }
+    }
+    if (old_uva != 0) {
+        proc_itimerval_t old;
+        proc_timer_snapshot(p, &old);
+        if (proc_copy_out(p->space, old_uva, &old, sizeof(old)) != 0) {
+            return -1;
+        }
+    }
+    uint64_t now = hal_now_ns();
+    if (value > ~0ull - now) {
+        value = ~0ull - now;
+    }
+    uint64_t flags = proc_lock();
+    if (value) {
+        p->timer_expire_ns = now + value;
+        p->timer_interval_ns = interval;
+    } else {
+        p->timer_expire_ns = 0;
+        p->timer_interval_ns = 0;
+    }
+    proc_unlock(flags);
+    return 0;
+}
+
+static uint64_t sys_alarm(fproc_t *p, uint64_t seconds)
+{
+    if (!p) {
+        return 0;
+    }
+    uint32_t secs = (uint32_t)seconds;
+    uint64_t now = hal_now_ns();
+    uint64_t flags = proc_lock();
+    uint64_t remain = 0;
+    if (p->timer_expire_ns) {
+        uint64_t delta =
+            p->timer_expire_ns > now ? p->timer_expire_ns - now : 0;
+        remain = (delta + 999999999ull) / 1000000000ull;
+    }
+    if (secs) {
+        p->timer_expire_ns = now + (uint64_t)secs * 1000000000ull;
+        p->timer_interval_ns = 0;
+    } else {
+        p->timer_expire_ns = 0;
+        p->timer_interval_ns = 0;
+    }
+    proc_unlock(flags);
+    return remain;
+}
+
+static void proc_timer_expire_locked(fproc_t *p, uint64_t now)
+{
+    if (!p || !p->timer_expire_ns || now < p->timer_expire_ns) {
+        return;
+    }
+    p->sigs[FPROC_SIGALRM].pending = 1;
+    if (p->timer_interval_ns) {
+        p->timer_expire_ns = now + p->timer_interval_ns;
+    } else {
+        p->timer_expire_ns = 0;
+    }
+}
+
+static void proc_timer_poll(fproc_t *p)
+{
+    if (!p) {
+        return;
+    }
+    uint64_t now = hal_now_ns();
+    uint64_t flags = proc_lock();
+    proc_timer_expire_locked(p, now);
+    proc_unlock(flags);
+}
+
+void finte_proc_timer_tick(void)
+{
+    uint64_t now = hal_now_ns();
+    fproc_t *fired[FPROC_MAX_PROCS];
+    uint32_t nfired = 0;
+    uint64_t flags = proc_lock();
+    for (uint32_t i = 0; i < FPROC_MAX_PROCS; i++) {
+        fproc_t *p = g_procs[i];
+        if (!p || !p->timer_expire_ns || now < p->timer_expire_ns) {
+            continue;
+        }
+        proc_timer_expire_locked(p, now);
+        fired[nfired++] = p;
+    }
+    proc_unlock(flags);
+    for (uint32_t i = 0; i < nfired; i++) {
+        if (fired[i]->flow && fired[i]->flow->thread) {
+            finte_sched_wake_thread(fired[i]->flow->thread);
+        }
+    }
+}
+
 static uint64_t sys_sigprocmask(fproc_t *p, uint64_t how, uint64_t mask)
 {
     if (!p) {
@@ -1820,6 +1990,15 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
     }
     if (nr == FPROC_SYS_GETPID) {
         return p ? p->pid : 1u;
+    }
+    if (nr == FPROC_SYS_GETITIMER) {
+        return (uint64_t)sys_getitimer(p, a0, a1);
+    }
+    if (nr == FPROC_SYS_ALARM) {
+        return sys_alarm(p, a0);
+    }
+    if (nr == FPROC_SYS_SETITIMER) {
+        return (uint64_t)sys_setitimer(p, a0, a1, a2);
     }
     if (nr == FPROC_SYS_WAITPID) {
         return (uint64_t)finte_proc_waitpid(p, (int32_t)a0, a1, (int)a2);
@@ -2652,6 +2831,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage job done\n", 22);
     int pgroup_rc = finte_usermode_run("pgroup.elf");
     hal_console_write("[abi] stage pgroup done\n", 25);
+    int alarm_rc = finte_usermode_run("alarm.elf");
+    hal_console_write("[abi] stage alarm done\n", 24);
     int cap_rc = proc_cap_test();
     hal_console_write("[abi] stage cap done\n", 22);
     int svc_rc = proc_service_test();
@@ -2687,15 +2868,15 @@ int finte_proc_abi_test(void)
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
                          "filemap=%s exec=%s signal=%s sigset=%s job=%s "
-                         "pgroup=%s cap=%s service=%s bad=%s dyn=%s "
-                         "churn=%s blocked=%s\n",
+                         "pgroup=%s alarm=%s cap=%s service=%s bad=%s "
+                         "dyn=%s churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
                          ok_str(cow_rc == 0), ok_str(filemap_rc == 0),
                          ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(sigset_rc == 0),
                          ok_str(job_rc == 0), ok_str(pgroup_rc == 0),
-                         ok_str(cap_rc == 0),
+                         ok_str(alarm_rc == 0), ok_str(cap_rc == 0),
                          ok_str(svc_rc == 0), ok_str(bad_rc == 0),
                          ok_str(dyn_rc == 0), ok_str(churn_rc == 0),
                          ok_str(blocked_ok));
@@ -2706,7 +2887,8 @@ int finte_proc_abi_test(void)
     return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
             cow_rc == 0 && filemap_rc == 0 && exec_rc == 0 &&
             sig_rc == 0 && sigset_rc == 0 && job_rc == 0 &&
-            pgroup_rc == 0 && cap_rc == 0 && svc_rc == 0 &&
+            pgroup_rc == 0 && alarm_rc == 0 && cap_rc == 0 &&
+            svc_rc == 0 &&
             bad_rc == 0 && dyn_rc == 0 && churn_rc == 0 &&
             blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

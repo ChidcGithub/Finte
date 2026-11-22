@@ -137,15 +137,15 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
 | SMP startup | Implemented (PSCI CPU_ON, 4 CPUs) |
 | User mode | Implemented (EL0, `svc #0`, shared process ABI) |
 | User address space | Implemented (4–5 GiB, per-process TTBR0 + ASID) |
-| Process ABI | Partial (fd table, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, cap transfer, service registry, ET_DYN load) |
+| Process ABI | Partial (fd table, mmap, file-backed mmap, COW fork, waitpid, exec, signal masks/pending sets/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, SIGALRM timers via alarm/setitimer/getitimer, cap transfer, service registry, ET_DYN load) |
 | Block devices | Implemented (virtio-mmio legacy + modern) |
 | ACPI / Device Tree parsing | Missing (pointers passed only) |
 | GICv3 | Missing |
 
 ## 5. Next priorities
 
-1. Extend the user ABI with signal timers and general file descriptors for the
-   Linux persona.
+1. Extend the user ABI with general file descriptors for the Linux persona and
+   CPU-time timers.
 2. ACPI/DTB parsing for platform discovery.
 3. GICv3 support if a target requires it.
 4. Virtio IRQ/feature work and a reusable DMA/block framework.
@@ -159,7 +159,8 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 - Fork shares pages read-only and copies on the first write (COW). Anonymous
   mappings are capped at 64 pages per mapping. Signals cover masks, pending
   sets, SIGUSR1/2/SIGCHLD handlers, default SIGTERM/SIGINT/SIGSEGV
-  termination, SIGSTOP/SIGCONT and SIGKILL; signal timers are absent.
+  termination, SIGSTOP/SIGCONT and SIGKILL; SIGALRM real-time timers are
+  supported, while ITIMER_VIRTUAL/PROF are absent.
 - `waitpid` reports exited, stopped and continued children via WUNTRACED and
   WCONTINUED, and accepts `-pgid`/0 selectors. `setpgid`/`getpgrp` and group
   signals via `kill(-pgid)` are supported; there is no general Linux fd table.
@@ -182,9 +183,9 @@ Do not claim cross-architecture parity until the corresponding tests exist.
   timer ticks, SMP flow distribution, `init.elf` at EL0, the full
   `procs` IPC/shared-memory/arena/time/preemption/fault demo, and the shared
   process ABI suite (fd table, mmap, file-backed mmap, COW fork, waitpid, exec,
-  signal masks/sigset, job control, process groups, cap transfer,
-  service registry, ET_DYN load, churn, blocked-flow abort) plus 147 core
-  checks, PASS.
+  signal masks/sigset, job control, process groups, SIGALRM timers, cap
+  transfer, service registry, ET_DYN load, churn, blocked-flow abort) plus 147
+  core checks, PASS.
 - `make arm64-uefi-test`: AAVMF ISO, boot protocol v1, PMM, MMU, GICv2, timer
   ticks, 4 CPUs, `hits=2/2/2/2`, `init.elf`, `procs` and the full ABI suite,
   PASS.

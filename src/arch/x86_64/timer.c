@@ -52,6 +52,7 @@ void timer_irq(void)
         cpu->ticks++;
     }
     finte_sched_tick();
+    finte_proc_timer_tick();
     fflow_t *f = cpu ? cpu->current : NULL;
     if (f && f->state == FINTE_FLOW_RUNNING && finte_sched_active() &&
         finte_sched_cpu_has_work()) {

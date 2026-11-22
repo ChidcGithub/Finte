@@ -144,7 +144,8 @@ The core flow model does not create an implicit process tree:
   child reaping, `exec`, a per-process fd table, anonymous and file-backed
   private `mmap`, signal masks/pending sets/default actions,
   SIGSTOP/SIGCONT job control, process groups with `setpgid`/`getpgrp` and
-  group `kill`/`waitpid`, and SIGUSR1 delivery for demo processes. Fork
+  group `kill`/`waitpid`, SIGALRM timers via `alarm`/`setitimer`/`getitimer`,
+  and SIGUSR1 delivery for demo processes. Fork
   copies the address space and fd table; it is not a global Unix process tree.
 - The program image is still immutable; `exec` replaces the user space with a
   freshly loaded image.
@@ -586,7 +587,8 @@ The native user ABI is `int 0x80` with `rax` as the call number:
 private-data isolation, a 50 ms sleep, two CPU-bound tasks with a heartbeat, and
 a deliberate read of supervisor memory that kills only the offending process.
 
-Still missing: signal timers and a Linux-persona fd table.
+Still missing: CPU-time timers (ITIMER_VIRTUAL/PROF) and a Linux-persona fd
+table.
 
 ## 13. HAL and portability
 

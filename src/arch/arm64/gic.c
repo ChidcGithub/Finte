@@ -100,6 +100,7 @@ static void arm64_timer_irq(void)
         __asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(1ull) : "memory");
     }
     finte_sched_tick();
+    finte_proc_timer_tick();
     if (cpu && cpu->current) {
         finte_sched_preempt(cpu->current);
     }

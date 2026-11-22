@@ -41,6 +41,13 @@ Short notes only. GitHub releases carry the per-commit changes.
   now rescans all matching children per event, so one stopped child no longer
   hides another. The new `pgroup.elf` covers group membership, group stop,
   continue, terminate and statuses; the shared ABI line reports `pgroup=OK`.
+- Added SIGALRM signal timers: `alarm(2)`, `getitimer(2)` and `setitimer(2)`
+  provide one-shot and repeating ITIMER_REAL timers. Expiry is detected in the
+  timer IRQ and again on the syscall return path, so delivery does not depend
+  on interrupts being unmasked while the scheduler idles. The new `alarm.elf`
+  checks remaining-time reporting, cancel, one-shot delivery, a repeating
+  200 ms timer, `getitimer` and the default SIGALRM exit status; the shared ABI
+  line reports `alarm=OK`.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

@@ -62,6 +62,9 @@
 #define FPROC_SYS_SERVICE_UNREG 17
 #define FPROC_SYS_DYNSVC       18
 #define FPROC_SYS_MMAP_FILE    19
+#define FPROC_SYS_GETITIMER    36
+#define FPROC_SYS_ALARM        37
+#define FPROC_SYS_SETITIMER    38
 #define FPROC_SYS_GETPID       39
 #define FPROC_SYS_WAITPID      40
 #define FPROC_WNOHANG          1
@@ -83,6 +86,7 @@
 #define FPROC_SIGUSR1          10
 #define FPROC_SIGSEGV          11
 #define FPROC_SIGUSR2          12
+#define FPROC_SIGALRM          14
 #define FPROC_SIGTERM          15
 #define FPROC_SIGCHLD          17
 #define FPROC_SIGCONT          18
@@ -158,6 +162,8 @@ struct fproc {
     uint8_t stop_pending;
     uint8_t stop_acked;
     uint8_t cont_pending;
+    uint64_t timer_expire_ns;   /* absolute; 0 = disarmed */
+    uint64_t timer_interval_ns; /* 0 = one-shot */
     char name[FINTE_NAME_MAX];
     ffd_t fds[FPROC_MAX_FDS];
     fmap_t maps[FPROC_MAX_MAPS];
@@ -242,6 +248,7 @@ int finte_user_copy_in(fflow_t *f, void *dst, uint64_t uva, size_t len);
 int finte_user_copy_out(fflow_t *f, uint64_t uva, const void *src, size_t len);
 void finte_user_fault(uint64_t vec, uint64_t rip, uint64_t cr2);
 void finte_process_signal_check(fproc_t *p, void *frame);
+void finte_proc_timer_tick(void);
 int finte_usermode_run(const char *name);
 int finte_proc_demo(void);
 int finte_proc_abi_test(void);
