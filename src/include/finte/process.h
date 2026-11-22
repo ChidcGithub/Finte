@@ -65,6 +65,8 @@
 #define FPROC_SYS_GETPID       39
 #define FPROC_SYS_WAITPID      40
 #define FPROC_WNOHANG          1
+#define FPROC_WUNTRACED        2
+#define FPROC_WCONTINUED       4
 #define FPROC_SYS_EXIT         60
 #define FPROC_SYS_TIME         200
 #define FPROC_SYS_SLEEP        201
@@ -83,6 +85,8 @@
 #define FPROC_SIGUSR2          12
 #define FPROC_SIGTERM          15
 #define FPROC_SIGCHLD          17
+#define FPROC_SIGCONT          18
+#define FPROC_SIGSTOP          19
 #define FPROC_SYS_SIGPROCMASK  41
 #define FPROC_SIG_BLOCK        0
 #define FPROC_SIG_UNBLOCK      1
@@ -147,6 +151,10 @@ struct fproc {
     uint32_t exit_code;
     uint8_t expected_fault;
     uint8_t fork_child;
+    uint8_t stopped;
+    uint8_t stop_pending;
+    uint8_t stop_acked;
+    uint8_t cont_pending;
     char name[FINTE_NAME_MAX];
     ffd_t fds[FPROC_MAX_FDS];
     fmap_t maps[FPROC_MAX_MAPS];

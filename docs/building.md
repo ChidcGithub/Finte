@@ -60,7 +60,7 @@ make qemu           # BIOS boot, serial console (SMP=4 by default)
 make qemu-uefi      # OVMF UEFI boot, serial console
 make qemu-test      # BIOS CLI boot test
 make qemu-uefi-test # UEFI CLI boot test
-make abi-test       # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/cap/churn suite
+make abi-test       # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/cap/churn suite
 make arm64-test     # arm64 4-CPU MMU/GIC/timer/SMP + EL0 user/procs/ABI
 make arm64-uefi-test # same arm64 checks under AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
@@ -333,6 +333,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 - x86_64 process ABI: 1 CPU, fd table, anonymous and file-backed private mmap,
   copy-on-write fork with fd inheritance, blocking waitpid with status/reaping,
   exec, SIGUSR1 delivery, signal masks/pending sets/default actions,
+  SIGSTOP/SIGCONT job control with waitpid WUNTRACED/WCONTINUED,
   user-to-user cap transfer, service registry, ET_DYN shared-object load,
   churn with PMM stability, blocked-flow abort and RX/RW-NX PTE checks.
 - arm64 direct QEMU `virt`: MMU identity translations, GICv2 timer ticks,

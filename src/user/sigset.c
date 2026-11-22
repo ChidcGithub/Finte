@@ -104,7 +104,9 @@ void _start(void)
         }
         int status = -1;
         long w = sc(SYS_WAITPID, pid, (long)&status, 0);
-        ok = ok && pid > 0 && w == pid && status == 128 + fatal[i];
+        ok = ok && pid > 0 && w == pid &&
+             ((status & 0x7F) == 0) &&
+             (((status >> 8) & 0xFF) == 128 + fatal[i]);
     }
     ok = ok && chld_count == 3;
 

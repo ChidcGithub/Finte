@@ -290,6 +290,7 @@ void finte_flow_yield(fflow_t *f);
 void finte_flow_sleep(fflow_t *f, uint64_t ns);
 void finte_flow_block(fflow_t *f, fchan_t *ch, int is_send);
 void finte_flow_wait_for(fflow_t *f, fflow_t *target);
+void finte_flow_stop(fflow_t *f);
 void finte_flow_exit(fflow_t *f, int code) __attribute__((noreturn));
 void finte_sched_wake(fflow_t *f);
 void finte_sched_enqueue(fflow_t *f);

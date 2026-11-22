@@ -273,6 +273,30 @@ void finte_flow_wait_for(fflow_t *f, fflow_t *target)
     finte_core_unlock();
 }
 
+void finte_flow_stop(fflow_t *f)
+{
+    fthread_t *t = f ? f->thread : NULL;
+    if (!f || !t || !t->ctx || !hal_cpu_self()->sched_ctx) {
+        return;
+    }
+    finte_core_lock();
+    if (!f->user || !((fproc_t *)f->user)->stopped) {
+        finte_core_unlock();
+        return;
+    }
+    ((fproc_t *)f->user)->stop_acked = 1;
+    t->blocking = 1;
+    finte_sched_sleep_thread(t, hal_now_ns() + (1ull << 62));
+    uint32_t depth = finte_core_lock_suspend();
+    hal_ctx_switch(t->ctx, hal_cpu_self()->sched_ctx);
+    finte_core_lock_resume(depth);
+    t->blocking = 0;
+    t->wake_pending = 0;
+    f->state = FINTE_FLOW_RUNNING;
+    t->state = FINTE_THREAD_RUNNING;
+    finte_core_unlock();
+}
+
 void finte_flow_exit(fflow_t *f, int code)
 {
     if (!f || !f->thread) {

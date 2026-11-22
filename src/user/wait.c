@@ -49,7 +49,8 @@ void _start(void)
     long reaped = sc(SYS_WAITPID, pid, (long)&status, 0);
     long again = sc(SYS_WAITPID, pid, (long)&status, 0);
     long missing = sc(SYS_WAITPID, 9999, (long)&status, 0);
-    int ok = reaped == pid && status == 7 && again < 0 && missing < 0;
+    int ok = reaped == pid && ((status >> 8) & 0xFF) == 7 && again < 0 &&
+             missing < 0;
     print("[wait] pid=");
     print_hex((unsigned long)reaped);
     print(" status=");
