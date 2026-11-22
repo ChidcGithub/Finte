@@ -1,8 +1,8 @@
 # Memory model
 
-> **Status:** Partial — x86_64 has paging, private user page tables and a
-> static kernel heap. arm64 has no MMU setup and only a static heap. There is
-> no general physical page allocator, demand paging or swap.
+> **Status:** Partial — a shared physical page manager consumes Boot Protocol
+> v1, x86_64 has paging and private user page tables, and arm64 has an identity
+> MMU. There is no demand paging, swap or general user VM on arm64.
 >
 > **Normative for:** physical memory, virtual address spaces, kernel/user
 > layout, allocation and mapping ownership.
@@ -12,25 +12,32 @@
 
 ## 1. Current physical memory model
 
-Finte does not yet have a full physical memory manager. Both bare-metal ports
-use a static kernel heap and a page-granular suballocator:
+The shared PMM (`src/core/pmm.c`) consumes `fboot_mmap_entry_t[]` from Boot
+Protocol v1. It uses two bitmaps (used and allocated) over a bounded physical
+range:
 
-| Port | Heap | Page allocation |
+| Port | PMM range | Page allocation |
 | --- | --- | --- |
-| x86_64 | 32 MiB static `.bss` heap | Bump pointer with free page and 32 KiB stack caches |
-| arm64 | 8 MiB static `.bss` heap | Bump pointer with a free page cache |
+| x86_64 | 16 MiB–1 GiB (1 GiB identity map) | `pmm_alloc_pages`, identity addresses |
+| arm64 | 1–4 GiB (`0x40000000`–`0x100000000`) | `pmm_alloc_pages`, identity addresses |
 
-`hal_pages_alloc(bytes)` rounds to 4 KiB, takes pages from the bump pointer,
-and uses cached free pages first. `hal_pages_free()` returns pages to the cache
-when they are inside the heap range. There is no NUMA awareness, no physical
-page database, no reclaim and no swap.
+`pmm_init()` marks non-usable map entries reserved, clears usable entries, and
+the boot code reserves the kernel, ramdisk/modules, boot info, descriptor
+arrays, ACPI/DTB, framebuffer and x86 page tables. `hal_pages_alloc(bytes)`
+rounds to 4 KiB, allocates zeroed pages from the PMM, and `hal_pages_free()`
+returns any allocated page count, including non-page-multiple caller sizes.
 
-Boot Protocol v1 passes an E820/UEFI memory map, but the current allocator does
-not consume it yet. It remains informational until the Phase 1 physical page
-manager.
+The old static heaps remain as fallback only:
+
+| Port | Fallback |
+| --- | --- |
+| x86_64 | 32 MiB `.bss` heap + page/stack caches when no boot memory map exists |
+| arm64 | 8 MiB `.bss` heap + page cache for direct `-kernel` boot |
 
 The kernel image is linked at 64 MiB on x86_64 and at `0x40080000` on arm64.
-The x86_64 boot path identity-maps the first 1 GiB with 2 MiB pages.
+The x86_64 boot path identity-maps the first 1 GiB with 2 MiB pages. The arm64
+MMU maps 4 GiB with 2 MiB blocks and selects a 48-bit or 39-bit VA root based
+on the firmware TCR.
 
 ## 2. x86_64 virtual layout
 
@@ -38,7 +45,8 @@ The x86_64 boot path identity-maps the first 1 GiB with 2 MiB pages.
 | --- | --- |
 | `0x00000000`–`0x40000000` | Identity-mapped low memory |
 | `0x04000000` (64 MiB) | Kernel image |
-| Kernel heap | Static `.bss` inside the kernel image |
+| 16 MiB–1 GiB | PMM allocatable identity range (kernel reserved) |
+| Kernel heap | Static `.bss` fallback inside the kernel image |
 | `0x100000000` (4 GiB) | `FPROC_USER_BASE`, user code/data |
 | `0x104000000` | `FPROC_STACK_TOP`, user stack top |
 | `0x108000000` | `FPROC_SHARED_VA`, shared page |
@@ -59,17 +67,21 @@ guard-page enforcement beyond the address-range checks.
 
 ## 3. arm64 virtual layout
 
-The arm64 port is linked at `0x40080000` and runs with the firmware's identity
-mapping after the UEFI loader calls `ExitBootServices`. It does not program
-its own translation tables, does not use ASIDs, and has no user address space.
+The arm64 port is linked at `0x40080000`. `src/arch/arm64/mmu.c` builds a
+static identity map with 2 MiB blocks:
 
-The kernel uses:
+- RAM from the v1 memory map (or `0x40000000`–`0x80000000` for direct boot) is
+  Normal WB, inner-shareable, executable;
+- `0x08000000`–`0x0A100000` (GIC, PL011, virtio-mmio window) is Device-nGnRnE,
+  non-executable;
+- the root is L0 for 48-bit VA or L1 for 39-bit VA, selected from the current
+  firmware TCR; `TTBR1` is disabled;
+- the BSP and APs share the same tables; secondary CPUs load the saved
+  `TTBR0_EL1`, TCR, MAIR and SCTLR values in `arm64_ap_entry`.
 
-- a static 8 MiB heap in `.bss`;
-- a 32 KiB flow stack per `hal_ctx_create()`;
-- the same Arena and object pools as the shared core.
-
-A real arm64 MMU contract is a Phase 1 objective.
+The kernel uses PMM-backed pages, a 32 KiB flow stack per `hal_ctx_create()`,
+16 KiB static AP stacks, and the same Arena/object pools as the shared core.
+There is no arm64 user address space or ASID allocator yet.
 
 ## 4. Kernel heap and object pools
 
@@ -142,9 +154,9 @@ The target contract requires:
 
 ## 9. Current limitations
 
-- No general physical page allocator.
-- No page database, reclaim or swap.
-- arm64 has no MMU or user address space.
+- PMM is a bitmap allocator with no per-page database, reclaim or swap.
+- PMM ranges are bounded: x86 to the 1 GiB identity map, arm64 to 4 GiB.
+- arm64 has an identity MMU but no user address space or ASID allocator.
 - No NX or read-only user mappings.
 - No demand paging or COW.
 - No general `mmap`/`munmap`.
@@ -152,10 +164,12 @@ The target contract requires:
 - No IOMMU or DMA address-space isolation.
 - The x86 user low identity map covers 4 GiB supervisor, not a minimal kernel
   window.
+- ACPI/DTB are passed and reserved but not parsed by the allocator or platform
+  layer.
 
 ## 10. Open questions
 
-- Physical page allocator design and metadata placement.
+- PMM reclaim, page database and memory-pressure policy.
 - Kernel/user address layout for both architectures.
 - Whether the kernel keeps a full identity map or a minimal direct map.
 - Page-table activation and TLB shootdown across CPUs.

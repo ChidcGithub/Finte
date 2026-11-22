@@ -26,8 +26,15 @@ static page_link_t *g_free_stacks;
 static size_t g_free_stack_count;
 
 static fcpu_t g_cpus[FINTE_MAX_CPUS];
-static fhal_ctx_t g_sched_ctx;
-static fhal_ctx_t *g_active;
+static fhal_ctx_t g_sched_ctx[FINTE_MAX_CPUS];
+static fhal_ctx_t *g_active[FINTE_MAX_CPUS];
+static uint32_t g_cpu_count = 1;
+#define ARM64_AP_STACK_BYTES 16384u
+uint8_t arm64_ap_stacks[FINTE_MAX_CPUS][ARM64_AP_STACK_BYTES]
+    __attribute__((aligned(16)));
+extern void arm64_ap_entry(void);
+extern int gic_version(void);
+extern void gic_send_sgi(uint32_t cpu, uint32_t irq);
 
 static uint64_t g_freq;
 static uint64_t g_console_start_ns;
@@ -37,6 +44,11 @@ static volatile int g_console_lock;
 extern void arm64_switch(uint64_t *from_sp, uint64_t to_sp);
 extern void arm64_trampoline(void);
 extern char vector_table[];
+extern void arm64_ap_entry(void);
+extern int arm64_smp_init(void);
+extern void gic_init(void);
+extern void gic_init_cpu(void);
+extern int gic_version(void);
 
 static inline uint64_t read_cntfrq(void)
 {
@@ -150,10 +162,7 @@ void hal_console_write(const char *buf, size_t len)
         return;
     }
     uint64_t flags = irq_save();
-    while (g_console_lock) {
-        __asm__ volatile("yield");
-    }
-    g_console_lock = 1;
+    hal_spin_lock(&g_console_lock);
     size_t i = 0;
     while (i < len) {
         if (g_console_line_start) {
@@ -173,7 +182,7 @@ void hal_console_write(const char *buf, size_t len)
         }
         i = j;
     }
-    g_console_lock = 0;
+    hal_spin_unlock(&g_console_lock);
     irq_restore(flags);
 }
 
@@ -183,8 +192,10 @@ void hal_console_write_raw(const char *buf, size_t len)
         return;
     }
     uint64_t flags = irq_save();
+    hal_spin_lock(&g_console_lock);
     console_raw(buf, len);
     g_console_line_start = buf[len - 1] == '\n';
+    hal_spin_unlock(&g_console_lock);
     irq_restore(flags);
 }
 
@@ -244,6 +255,17 @@ int hal_console_trywheel(void)
 
 void hal_heap_info(uint64_t *used, uint64_t *total)
 {
+    if (pmm_active()) {
+        uint64_t pages = pmm_usable_pages();
+        uint64_t free_pages = pmm_free_page_count();
+        if (total) {
+            *total = pages * FINTE_PAGE_SIZE;
+        }
+        if (used) {
+            *used = (pages - free_pages) * FINTE_PAGE_SIZE;
+        }
+        return;
+    }
     if (used) {
         *used = g_heap_used - (uint64_t)g_free_page_count * 4096ull -
                 (uint64_t)g_free_stack_count * FLOW_STACK_BYTES;
@@ -257,6 +279,16 @@ void *hal_pages_alloc(size_t bytes)
 {
     if (bytes == 0) {
         bytes = 4096;
+    }
+    if (pmm_active()) {
+        size_t pages = (bytes + FINTE_PAGE_SIZE - 1u) / FINTE_PAGE_SIZE;
+        uint64_t phys = pmm_alloc_pages(pages);
+        if (!phys) {
+            return NULL;
+        }
+        void *p = (void *)(uintptr_t)phys;
+        finte_memset(p, 0, pages * FINTE_PAGE_SIZE);
+        return p;
     }
     if (bytes == 4096 && g_free_pages) {
         uint64_t flags = irq_save();
@@ -288,7 +320,16 @@ void *hal_pages_alloc(size_t bytes)
 
 void hal_pages_free(void *ptr, size_t bytes)
 {
-    if (!ptr || bytes == 0 || (bytes & 0xFFFu) != 0) {
+    if (!ptr || bytes == 0) {
+        return;
+    }
+    if (pmm_active() && ((uintptr_t)ptr & 0xFFFu) == 0 &&
+        pmm_owns((uint64_t)(uintptr_t)ptr, bytes)) {
+        pmm_free_pages((uint64_t)(uintptr_t)ptr,
+                       (bytes + FINTE_PAGE_SIZE - 1u) / FINTE_PAGE_SIZE);
+        return;
+    }
+    if ((bytes & 0xFFFu) != 0) {
         return;
     }
     uintptr_t page = (uintptr_t)ptr;
@@ -316,6 +357,11 @@ void hal_pages_free(void *ptr, size_t bytes)
 
 fcpu_t *hal_cpu_self(void)
 {
+    uint64_t self;
+    __asm__ volatile("mrs %0, tpidr_el1" : "=r"(self));
+    if (self) {
+        return (fcpu_t *)(uintptr_t)self;
+    }
     return &g_cpus[0];
 }
 
@@ -326,18 +372,22 @@ fcpu_t *hal_cpu_slot(uint32_t index)
 
 uint32_t hal_cpu_count(void)
 {
-    return 1;
+    return g_cpu_count;
 }
 
 void hal_cpu_install(fcpu_t *cpu)
 {
-    (void)cpu;
+    __asm__ volatile("msr tpidr_el1, %0" : : "r"((uint64_t)(uintptr_t)cpu)
+                     : "memory");
 }
 
 void hal_cpu_mark_online(uint32_t index)
 {
     if (index < FINTE_MAX_CPUS) {
-        g_cpus[index].online = 1;
+        if (!g_cpus[index].online) {
+            g_cpus[index].online = 1;
+            __atomic_add_fetch(&g_cpu_count, 1, __ATOMIC_RELAXED);
+        }
     }
 }
 
@@ -357,24 +407,48 @@ void hal_spin_unlock(volatile int *lock)
 
 void hal_cpu_wake(uint32_t index)
 {
-    (void)index;
+    if (index < FINTE_MAX_CPUS && g_cpus[index].online) {
+        gic_send_sgi(index, 0);
+    }
 }
 
 void hal_cpu_wake_all(void)
 {
+    for (uint32_t i = 0; i < g_cpu_count; i++) {
+        if (g_cpus[i].online) {
+            gic_send_sgi(i, 0);
+        }
+    }
 }
 
 void hal_cpu_idle(void)
 {
+    /* WFI wakes on a pending physical IRQ even with DAIF masked; the
+     * scheduler loop then observes g_batch and queued work. */
     __asm__ volatile("wfi");
 }
 
 void hal_timer_start_cpu(void)
 {
+    if (gic_version() != 2) {
+        return;
+    }
+    uint64_t freq = hal_cycles_per_sec();
+    if (!freq) {
+        freq = 62500000ull;
+    }
+    uint64_t tval = freq / 100u;
+    if (tval == 0) {
+        tval = 1;
+    }
+    __asm__ volatile("msr cntp_ctl_el0, xzr" : : : "memory");
+    __asm__ volatile("msr cntp_tval_el0, %0" : : "r"(tval) : "memory");
+    __asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(1ull) : "memory");
 }
 
 void hal_timer_stop_cpu(void)
 {
+    __asm__ volatile("msr cntp_ctl_el0, xzr" : : : "memory");
 }
 
 void hal_idle(uint64_t ns)
@@ -389,6 +463,64 @@ static void psci_call(uint64_t function)
 {
     register uint64_t x0 __asm__("x0") = function;
     __asm__ volatile("hvc #0" : "+r"(x0) : : "memory");
+}
+
+static uint64_t psci_call4(uint64_t function, uint64_t a1, uint64_t a2,
+                           uint64_t a3)
+{
+    register uint64_t x0 __asm__("x0") = function;
+    register uint64_t x1 __asm__("x1") = a1;
+    register uint64_t x2 __asm__("x2") = a2;
+    register uint64_t x3 __asm__("x3") = a3;
+    __asm__ volatile("hvc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3)
+                     : "memory");
+    return x0;
+}
+
+static uint64_t read_mpidr(void)
+{
+    uint64_t v;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(v));
+    return v & 0xFFull;
+}
+
+void arm64_ap_main(uint64_t index)
+{
+    if (index == 0 || index >= FINTE_MAX_CPUS) {
+        for (;;) {
+            __asm__ volatile("wfi");
+        }
+    }
+    fcpu_t *cpu = &g_cpus[index];
+    cpu->self = cpu;
+    cpu->id = (uint32_t)index;
+    cpu->hw_id = (uint32_t)read_mpidr();
+    cpu->timer_mode = FINTE_TIMER_ARCH;
+    finte_memset(&g_sched_ctx[index], 0, sizeof(g_sched_ctx[index]));
+    g_sched_ctx[index].impl = &g_sched_ctx[index];
+    g_active[index] = &g_sched_ctx[index];
+    hal_cpu_install(cpu);
+    gic_init_cpu();
+    hal_cpu_mark_online((uint32_t)index);
+    finte_sched_ap_run();
+}
+
+int arm64_smp_init(void)
+{
+    uint32_t started = 0;
+    for (uint32_t i = 1; i < FINTE_MAX_CPUS; i++) {
+        uint64_t rc = psci_call4(0x84000003ull, i,
+                                 (uint64_t)(uintptr_t)arm64_ap_entry, i);
+        if (rc != 0) {
+            break;
+        }
+        started++;
+    }
+    uint64_t deadline = hal_now_ns() + 200000000ull;
+    while (g_cpu_count < 1u + started && hal_now_ns() < deadline) {
+        __asm__ volatile("yield");
+    }
+    return (int)started;
 }
 
 void hal_exit(int code)
@@ -455,7 +587,11 @@ static void arm64_set_addr_space(uint64_t root)
 
 fhal_ctx_t *hal_ctx_self(void)
 {
-    return g_active ? g_active : &g_sched_ctx;
+    uint32_t id = hal_cpu_self()->id;
+    if (id >= FINTE_MAX_CPUS) {
+        id = 0;
+    }
+    return g_active[id] ? g_active[id] : &g_sched_ctx[id];
 }
 
 fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes)
@@ -487,15 +623,20 @@ fhal_ctx_t *hal_ctx_create(void (*entry)(void *), void *arg, size_t stack_bytes)
     }
     frame[10] = 0; /* x29 */
     frame[11] = (uint64_t)(uintptr_t)arm64_trampoline; /* x30 */
-    frame[12] = 0x3C0ull; /* DAIF: mask D/A/I/F until a timer exists */
+    frame[12] = 0; /* DAIF: unmask debug/SError/IRQ/FIQ */
     ctx->sp = (uint64_t)(uintptr_t)frame;
     return ctx;
 }
 
 void hal_ctx_destroy(fhal_ctx_t *ctx)
 {
-    if (!ctx || ctx == &g_sched_ctx) {
+    if (!ctx) {
         return;
+    }
+    for (uint32_t i = 0; i < FINTE_MAX_CPUS; i++) {
+        if (ctx == &g_sched_ctx[i]) {
+            return;
+        }
     }
     void *stack = ctx->stack;
     size_t bytes = ctx->stack_size;
@@ -511,7 +652,10 @@ void hal_ctx_switch(fhal_ctx_t *from, fhal_ctx_t *to)
     if (to->addr_space) {
         arm64_set_addr_space(to->addr_space);
     }
-    g_active = to;
+    uint32_t id = hal_cpu_self()->id;
+    if (id < FINTE_MAX_CPUS) {
+        g_active[id] = to;
+    }
     arm64_switch(&from->sp, to->sp);
 }
 
@@ -533,16 +677,22 @@ void hal_init(void)
     g_console_start_ns = hal_now_ns();
     g_console_line_start = 1;
     finte_memset(g_cpus, 0, sizeof(g_cpus));
+    finte_memset(g_sched_ctx, 0, sizeof(g_sched_ctx));
+    finte_memset(g_active, 0, sizeof(g_active));
+    g_cpu_count = 1;
     g_cpus[0].self = &g_cpus[0];
     g_cpus[0].id = 0;
     g_cpus[0].hw_id = 0;
     g_cpus[0].online = 1;
     g_cpus[0].timer_mode = FINTE_TIMER_ARCH;
-    g_sched_ctx.entry = NULL;
-    g_sched_ctx.arg = NULL;
-    g_sched_ctx.impl = &g_sched_ctx;
-    g_active = &g_sched_ctx;
+    g_sched_ctx[0].entry = NULL;
+    g_sched_ctx[0].arg = NULL;
+    g_sched_ctx[0].impl = &g_sched_ctx[0];
+    g_active[0] = &g_sched_ctx[0];
+    hal_cpu_install(&g_cpus[0]);
     __asm__ volatile("msr vbar_el1, %0; isb" : : "r"(vector_table) : "memory");
+    gic_init();
+    gic_init_cpu();
     irq_restore(flags);
 }
 

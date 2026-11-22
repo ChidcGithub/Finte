@@ -167,13 +167,15 @@ entry. It is available for future allocator integration.
   future native HID driver.
 - No command-line, entropy or additional module producers yet.
 - ACPI/DTB pointers are passed through but not validated beyond non-zero.
-- The memory map is informational until the Phase 1 memory manager lands.
+- The memory map is consumed by the shared PMM, which reserves the kernel,
+  ramdisk/modules, boot info, descriptor arrays, ACPI/DTB, framebuffer and
+  page tables before handing out pages.
 
 ## 7. Test evidence
 
 - `src/tests/test_main.c`: `boot protocol` validates a good structure, rejects
   bad magic/version/map entries and checks usable-range lookup.
-- `make test`: 21 host tests pass.
+- `make test`: 22 host tests pass.
 - `make qemu-test`: x86 BIOS, E820 map, ramdisk module, 147 checks.
 - `make qemu-uefi-test`: x86 UEFI, memory map, modules, `fw=0`, 147 checks.
 - `make qemu-uefi-disk-test`: AHCI after `ExitBootServices`.

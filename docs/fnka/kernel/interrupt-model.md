@@ -1,8 +1,9 @@
 # Interrupt and exception model
 
-> **Status:** Partial — x86_64 has an IDT, exceptions, PIT/LAPIC timers, IPIs
-> and UEFI firmware-IDT switching. arm64 has an exception vector table but no
-> GIC, timer interrupt, IPI or user-mode exception delivery.
+> **Status:** Partial — x86_64 has an IDT, exceptions, PIT/LAPIC timers and
+> IPIs. arm64 has exception vectors, GICv2, generic timer IRQs and SGI IPIs.
+> User-mode exception delivery and ACPI/DTB interrupt discovery are still
+> missing.
 >
 > **Normative for:** exception entry, interrupt dispatch, timer and IPI
 > mechanisms, and the boundary between the core and platform interrupt
@@ -52,18 +53,20 @@
 ## 2. Current arm64 model
 
 - `src/arch/arm64/entry.S` installs a 16-entry exception vector table in
-  `VBAR_EL1`.
-- Every vector currently branches to `arm64_fault`, which reports the fault and
-  parks the CPU.
+  `VBAR_EL1`; IRQ entries save a 288-byte frame and return through `eret`.
+- Synchronous exceptions report ESR/FAR/ELR/SPSR and panic. SVC/user mode is
+  not implemented.
 - `hal_irq_disable()` / `hal_irq_enable()` manipulate `DAIF`.
-- The generic counter is readable (`CNTPCT_EL0`, `CNTFRQ_EL0`), but no timer
-  compare interrupt is programmed.
-- There is no GIC initialization, no IRQ dispatch and no IPI.
-- PSCI `SYSTEM_OFF` is used for shutdown.
+- GICv2 at `0x08000000`/`0x08010000`: distributor/CPU interface init, SGI 0
+  for reschedule IPIs, PPI 30 for the EL1 physical timer.
+- The generic timer runs at 100 Hz; the handler rearms `CNTP_TVAL_EL0`, EOIs,
+  increments per-CPU ticks, calls `finte_sched_tick()` and may preempt.
+- PSCI over HVC covers `SYSTEM_OFF` and `CPU_ON`; APs initialize their GIC CPU
+  interface and join the per-CPU scheduler.
 - The UEFI loader calls `ExitBootServices` and disables interrupts before
-  jumping to the kernel.
+  jumping; the kernel reinitializes GIC/timer state.
 
-arm64 therefore has exception vectors but not a usable interrupt subsystem.
+GICv3 is not implemented; the QEMU targets pin the GICv2 machine model.
 
 ## 3. Target model
 
@@ -99,7 +102,7 @@ own controller discovery and configuration:
 
 ## 5. Current limitations
 
-- arm64 has no GIC, timer IRQ or IPI.
+- arm64 has no user-mode exception delivery, MSI framework or GICv3 support.
 - No user-space IRQ delivery.
 - No IRQ capabilities.
 - No MSI/MSI-X framework.
@@ -125,5 +128,6 @@ own controller discovery and configuration:
 - `preempt`: timer preemption against a spinning Flow.
 - `smp`: AP startup, per-CPU timers and IPIs.
 - `make qemu-disk-test`: ATA/AHCI interrupt-driven or polled block I/O paths.
-- arm64 `make arm64-test`: exception vectors and core checks; no timer IRQ,
-  GIC or IPI coverage.
+- arm64 `make arm64-test` / `make arm64-uefi-test`: exception vectors, GICv2,
+  PPI 30 timer ticks, SGI IPIs, 4-CPU PSCI startup and per-CPU flow hits, in
+  addition to the 147 core checks.

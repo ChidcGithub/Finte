@@ -20,13 +20,13 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 
 ## Status
 
-- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 21 self-tests passing on Linux/WSL and Windows.
+- **v0.0.1** (nickname **base**), built as `0.0.1-<short commit>`, 22 self-tests passing on Linux/WSL and Windows.
 - **Own boot path**, no GRUB: 512-byte MBR boot sector + CHS stage2 for BIOS, PE32+ UEFI loaders for x86_64 and arm64, and FAT ESPs. `make images` produces x86_64 BIOS/UEFI hybrid media and arm64 UEFI ISO/IMG media.
 - **Boots in QEMU** under SeaBIOS and OVMF, and runs a **CLI shell** with VGA text (BIOS) or a GOP framebuffer (UEFI).
 - **Startup POST** checks boot protocol, boot info, CPU mode, GDT/IDT, kernel mapping, TSC and heap, then runs **147 core checks** before the shell starts.
 - **Disk manager** with MBR/GPT partitions, ATA PIO (BIOS), AHCI (UEFI; firmware Block I/O only if `fw_services`), writable **lfc1 v2**, and read-only **NTFS**/**ext4**. An 8-entry read cache, atomic superblock-last sync, host `lfc1ck.py` validation/compaction, and capability-backed file handles.
 - **Shell** with `cd`/`pwd`, `write`, `mkdir`, `rm`, `touch`, `cp`, `mv`, `head`, `tail`, `hexdump`, `tree`, `df`, `sync`, history, arrows, home/end/delete and tab completion, in addition to the diagnostic commands.
-- **Timer preemption**: PIT at 100 Hz on the BSP, calibrated LAPIC timers on APs, PIC/LAPIC EOI handling, RFLAGS-aware context switching. Flows run with interrupts enabled; the scheduler and verb dispatcher run with them off. The `preempt` command proves two non-yielding flows make progress.
+- **Timer preemption**: PIT at 100 Hz on the x86 BSP, calibrated LAPIC timers on x86 APs, and the AArch64 generic timer through GICv2 PPI 30. Flows run with interrupts enabled; the scheduler and verb dispatcher run with them off. The `preempt` command proves two non-yielding flows make progress.
 - **Flow/Thread split**: each Flow now owns an internal `fthread_t` with its own context, stack, CPU affinity, scheduling state and runtime accounting; Fuel, capabilities and task state stay on the Flow. User-visible Thread creation and Parallel Flows are future work.
 - **SMP / multi-core scheduling**: a SIPI trampoline starts up to 8 CPUs, each with per-CPU thread run queues and locks, local APIC timers, idle IPIs and a per-CPU GDT/TSS. `finte_sched_migrate()` moves flows between CPUs; work-stealing code exists but is currently disabled (`smp` reports `steals=0`). Per-CPU page/stack caches reduce allocator contention. A global core object lock still serializes verbs while flows compute in parallel. `smp` shows per-CPU ticks, IPIs, switches, steals and migrations.
 - **Color console**: the VGA text and GOP framebuffer consoles parse ANSI SGR sequences (`30`–`37`, `90`–`97`, bold) and expose a `color` palette command. Shell prompts, errors and results use color on real hardware as well as in QEMU.
@@ -36,9 +36,10 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 - **Startup performance**: the GOP console draws glyphs with packed 64-bit stores and skips clearing rows that are already blank. With serial disabled, the BIOS path reaches the shell in about 0.8 seconds; UEFI wall time is dominated by OVMF firmware.
 - **Isolated user processes**: `user`, `procs` and `services` load ELF64 programs into private 4 KiB page tables at 4 GiB, with the low identity map supervisor-only. Each process has its own code, data and page-scoped arena window; `procs` runs four of them concurrently and demonstrates message passing, shared memory, monotonic time, `sleep`, preemptive round-robin scheduling, page-level arena caps, and process-kill on a kernel-memory fault.
 - **3-strike watchdog**: unexpected user faults, scheduler deadlocks and disk-sync failures add a strike. On the third, the kernel prints a red panic and powers off. `selfcheck` and the expected `procs` fault are excluded. `watchdog` shows the state, `watchdog test` injects a strike, and `watchdog reset` clears it.
-- **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; an arm64 QEMU `virt` backend uses PL011, the generic counter, PSCI and the same scheduler. `make arm64-test` runs all 147 core checks under `qemu-system-aarch64`.
+- **Portable HAL**: the core builds against a platform-neutral `finte/hal.h`. The x86_64 backend keeps VGA/GOP, PIT/LAPIC/TSC, CR3 and ATA/AHCI; the arm64 QEMU `virt` backend now has MMU/page tables, exception vectors, GICv2, the generic timer IRQ, PSCI CPU_ON, per-CPU state and the shared scheduler. `make arm64-test` runs 4 CPUs, the 147 core checks, MMU/timer/SMP probes, and per-CPU flow distribution. `make arm64-uefi-test` runs the same platform checks under AAVMF.
 - **Ring 3 / ELF64**: `user` loads `init.elf` from the initrd as an isolated process, enters CPL3 through a GDT/TSS and `int 0x80` gate, and returns to the shell when the process exits.
 - **Boot Protocol v1**: x86 BIOS, x86 UEFI and arm64 UEFI produce one validated structure with kernel/ramdisk, E820 or UEFI memory map, ACPI/DTB, modules and framebuffer. Both UEFI loaders call `ExitBootServices`; the kernel no longer uses firmware Block I/O or ConIn.
+- **Physical page allocator**: PMM consumes the v1 memory map, reserves the kernel, ramdisk/modules, boot info, descriptor arrays, ACPI/DTB, framebuffer and page tables, and backs `hal_pages_alloc/free`. The x86 static heap remains only as a no-boot-info fallback; arm64 uses PMM on UEFI, with the static heap as the `-kernel` fallback.
 - Runs the **same producer/transform/sink pipeline** in the host simulator and on the metal image.
 - Runs the **Linux x86_64 persona** in both environments.
 - Native Windows host build uses Win32 fibers; Linux uses `ucontext`.
@@ -71,7 +72,7 @@ make image          # hybrid BIOS + UEFI USB image
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
 make user           # build init.elf + ipc.elf (packed into the initrd)
-make test           # 21 extended core self-tests
+make test           # 22 extended core self-tests
 make selfcheck      # startup POST/self-check suite
 make qemu           # BIOS boot, serial console (4 CPUs by default)
 make qemu-uefi      # UEFI/OVMF boot, serial console
@@ -84,8 +85,9 @@ make demo           # host-side native pipeline
 make compat         # host-side Linux persona
 make bench          # host microbenchmarks
 make arm64          # arm64 QEMU virt kernel (build/finte-arm64.elf)
-make arm64-test     # boot arm64 and verify the 147 core checks
-make qemu-arm64     # interactive arm64 serial console
+make arm64-test     # 4-CPU MMU/timer/SMP checks + 147 core checks
+make arm64-uefi-test # same platform checks through AAVMF
+make qemu-arm64     # interactive 4-CPU arm64 serial console
 python3 tools/lfc1ck.py build/disk-test.img --list
 ```
 
@@ -476,7 +478,7 @@ The performance argument is structural: handles are direct indexes, capability c
 - Linux x86_64 persona subset and RAMFS.
 - Host simulator on Linux (ucontext) and Windows (fibers).
 - Startup POST (9 POST checks) and 147 core checks in the kernel.
-- 21 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
+- 22 extended self-tests, BIOS/UEFI CLI boot tests, lfc1/ext4/NTFS disk tests,
   writable-lfc1 persistence, timer-preemption, boot protocol v1 and ring-3
   tests.
 

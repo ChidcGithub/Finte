@@ -2,6 +2,8 @@
 #define FINTE_H
 
 #include "finte/base.h"
+#include "finte/boot.h"
+#include "finte/pmm.h"
 #include "finte/hal.h"
 #include "finte/object.h"
 #include "finte/verb.h"

@@ -12,6 +12,16 @@
 static volatile int g_state_lock;
 static volatile int g_batch;
 
+static int batch_active(void)
+{
+    return __atomic_load_n(&g_batch, __ATOMIC_ACQUIRE);
+}
+
+static void batch_set(int value)
+{
+    __atomic_store_n(&g_batch, value, __ATOMIC_RELEASE);
+}
+
 static int band_of(const fthread_t *t)
 {
     return t->priority == 0 ? 0 : 1;
@@ -154,7 +164,7 @@ void finte_sched_enqueue_thread(fthread_t *t)
     enqueue_locked(t);
     uint32_t target = t->cpu;
     state_unlock(flags);
-    if (g_batch) {
+    if (batch_active()) {
         hal_cpu_wake(target);
     }
 }
@@ -284,7 +294,7 @@ void finte_sched_wake_thread(fthread_t *t)
     enqueue_locked(t);
     uint32_t target = t->cpu;
     state_unlock(flags);
-    if (g_batch) {
+    if (batch_active()) {
         hal_cpu_wake(target);
     }
 }
@@ -355,7 +365,7 @@ static int wake_sleepers(void)
  * Called from the timer IRQ before the preemption decision. */
 void finte_sched_tick(void)
 {
-    if (!g_batch) {
+    if (!batch_active()) {
         return;
     }
     (void)wake_sleepers();
@@ -452,7 +462,7 @@ void finte_sched_preempt(fflow_t *f)
 
 int finte_sched_active(void)
 {
-    return g_batch;
+    return batch_active();
 }
 
 int finte_sched_cpu_has_work(void)
@@ -498,7 +508,7 @@ int finte_sched_migrate(fflow_t *f, uint32_t target)
     }
     to->migrations++;
     state_unlock(flags);
-    if (g_batch) {
+    if (batch_active()) {
         hal_cpu_wake(target);
     }
     return 0;
@@ -539,7 +549,7 @@ static fthread_t *steal_one(fcpu_t *self)
 void finte_sched_reset(void)
 {
     uint64_t flags = state_lock();
-    g_batch = 0;
+    batch_set(0);
     for (uint32_t i = 0; i < FINTE_MAX_CPUS; i++) {
         fcpu_t *cpu = hal_cpu_slot(i);
         if (!cpu) {
@@ -655,7 +665,7 @@ static void sched_loop(fcpu_t *cpu, int owner)
             run_thread(cpu, t);
             continue;
         }
-        if (!owner && !g_batch) {
+        if (!owner && !batch_active()) {
             cpu->idle = 1;
             hal_cpu_idle();
             cpu->idle = 0;
@@ -700,13 +710,13 @@ static void sched_loop(fcpu_t *cpu, int owner)
 
 void finte_run(void)
 {
-    if (g_batch) {
+    if (batch_active()) {
         return;
     }
     if (hal_cpu_self()->id != 0) {
         return;
     }
-    g_batch = 1;
+    batch_set(1);
     finte_core.status = FINTE_OK;
     fcpu_t *cpu = hal_cpu_self();
     cpu->sched_ctx = hal_ctx_self();
@@ -714,7 +724,7 @@ void finte_run(void)
     wake_queued();
     hal_cpu_wake_all();
     sched_loop(cpu, 1);
-    g_batch = 0;
+    batch_set(0);
     hal_irq_enable();
 }
 

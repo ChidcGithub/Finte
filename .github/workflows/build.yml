@@ -14,7 +14,8 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld gcc-aarch64-linux-gnu qemu-system-arm
+          sudo apt-get install -y clang lld gcc-aarch64-linux-gnu \
+            qemu-system-arm qemu-efi-aarch64
       - name: Build images
         run: make images
       - name: Run host and core checks
@@ -23,6 +24,8 @@ jobs:
           ./build/finte selfcheck
       - name: Run arm64 boot test
         run: make arm64-test
+      - name: Run arm64 UEFI test
+        run: make arm64-uefi-test
       - uses: actions/upload-artifact@v4
         with:
           name: finte-images

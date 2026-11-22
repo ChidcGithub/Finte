@@ -348,6 +348,17 @@ int hal_console_trywheel(void)
 
 void hal_heap_info(uint64_t *used, uint64_t *total)
 {
+    if (pmm_active()) {
+        uint64_t pages = pmm_usable_pages();
+        uint64_t free_pages = pmm_free_page_count();
+        if (total) {
+            *total = pages * FINTE_PAGE_SIZE;
+        }
+        if (used) {
+            *used = (pages - free_pages) * FINTE_PAGE_SIZE;
+        }
+        return;
+    }
     if (used) {
         *used = g_heap_used - (uint64_t)g_free_page_count * 4096ull -
                 (uint64_t)g_free_stack_count * FLOW_STACK_BYTES -
@@ -568,6 +579,16 @@ void *hal_pages_alloc(size_t bytes)
     if (bytes == 0) {
         bytes = 4096;
     }
+    if (pmm_active()) {
+        size_t pages = (bytes + FINTE_PAGE_SIZE - 1u) / FINTE_PAGE_SIZE;
+        uint64_t phys = pmm_alloc_pages(pages);
+        if (!phys) {
+            return NULL;
+        }
+        void *p = (void *)(uintptr_t)phys;
+        finte_memset(p, 0, pages * FINTE_PAGE_SIZE);
+        return p;
+    }
     uint32_t id = page_cpu();
     if (bytes == 4096 && g_cpu_page_count[id]) {
         void *page = g_cpu_pages[id][--g_cpu_page_count[id]];
@@ -618,7 +639,16 @@ void *hal_pages_alloc(size_t bytes)
 
 void hal_pages_free(void *ptr, size_t bytes)
 {
-    if (!ptr || bytes == 0 || (bytes & 0xFFFu) != 0) {
+    if (!ptr || bytes == 0) {
+        return;
+    }
+    if (pmm_active() && ((uintptr_t)ptr & 0xFFFu) == 0 &&
+        pmm_owns((uint64_t)(uintptr_t)ptr, bytes)) {
+        pmm_free_pages((uint64_t)(uintptr_t)ptr,
+                       (bytes + FINTE_PAGE_SIZE - 1u) / FINTE_PAGE_SIZE);
+        return;
+    }
+    if ((bytes & 0xFFFu) != 0) {
         return;
     }
     uintptr_t page = (uintptr_t)ptr;

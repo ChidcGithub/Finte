@@ -45,7 +45,7 @@ CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c sr
             src/core/demo.c src/core/guest_linux.c src/core/selftest.c src/core/initrd.c \
             src/core/disk.c src/core/lfc1.c src/core/ext4.c src/core/ntfs.c src/core/file.c \
             src/core/lock.c src/core/cas.c src/core/ansi.c src/core/watchdog.c \
-            src/core/bootinfo.c
+            src/core/bootinfo.c src/core/pmm.c
 HOST_SRC := $(CORE_SRC) src/host/hal_host.c src/host/blk_host.c src/host/main.c src/host/bench.c src/tests/test_main.c
 
 KERNEL_SRC := $(CORE_SRC) src/arch/x86_64/kmain.c src/arch/x86_64/hal_x86.c \
@@ -60,15 +60,15 @@ KERNEL_OBJ := $(patsubst %.c,$(BUILD)/kobj/%.o,$(KERNEL_SRC)) \
               $(patsubst %.S,$(BUILD)/kobj/asm/%.o,$(KERNEL_ASM))
 
 ARM64_SRC := $(CORE_SRC) src/arch/arm64/kmain_arm64.c src/arch/arm64/hal_arm64.c \
-             src/arch/arm64/string.c
-ARM64_ASM := src/arch/arm64/entry.S src/arch/arm64/context.S
+             src/arch/arm64/mmu.c src/arch/arm64/gic.c src/arch/arm64/string.c
+ARM64_ASM := src/arch/arm64/entry.S src/arch/arm64/context.S src/arch/arm64/ap_entry.S
 ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
              $(patsubst %.S,$(BUILD)/arm64/obj/%.o,$(ARM64_ASM))
 
 .PHONY: all host kernel kernel-elf image uefi bootloader initrd test selfcheck \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
         disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
-        arm64 arm64-test qemu-arm64 images iso
+        arm64 arm64-test arm64-uefi-test qemu-arm64 images iso
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
@@ -91,17 +91,25 @@ $(BUILD)/finte-arm64.elf: $(ARM64_OBJ) src/arch/arm64/kernel.ld
 
 arm64-test: arm64
 	@rm -f $(BUILD)/arm64.log
-	timeout 40 $(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 1 \
+	timeout 40 $(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 4 \
 	  -nographic -monitor none -no-reboot \
 	  -kernel $(BUILD)/finte-arm64.elf > $(BUILD)/arm64.log 2>&1 || true
-	@if grep -q "arm64 self-check: PASS" $(BUILD)/arm64.log; then \
+	@if grep -q "arm64 self-check: PASS" $(BUILD)/arm64.log && \
+	    grep -Eq "mmu: (39|48)-bit identity map enabled" $(BUILD)/arm64.log && \
+	    grep -q "arm64 timer: gic=v2 ticks=[1-9]" $(BUILD)/arm64.log && \
+	    grep -q "arm64 smp: 3 application processor(s) online, 4 cpu(s) total" $(BUILD)/arm64.log && \
+	    grep -q "arm64 smp: hits=2/2/2/2" $(BUILD)/arm64.log; then \
 	  echo "arm64 boot test: OK"; \
 	else \
 	  echo "arm64 boot test: FAILED"; tail -80 $(BUILD)/arm64.log; exit 1; \
 	fi
 
+arm64-uefi-test: $(BUILD)/finte-arm64.iso
+	AAVMF_CODE=$(AAVMF_CODE) AAVMF_VARS=$(AAVMF_VARS) \
+	  bash tools/qemu_arm64_uefi_test.sh
+
 qemu-arm64: arm64
-	$(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 1 \
+	$(QEMU_ARM64) -M virt -cpu cortex-a57 -m 256M -smp 4 \
 	  -nographic -monitor none -no-reboot \
 	  -kernel $(BUILD)/finte-arm64.elf
 
@@ -279,6 +287,8 @@ qemu: image
 
 OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
+AAVMF_CODE ?= /usr/share/AAVMF/AAVMF_CODE.fd
+AAVMF_VARS ?= /usr/share/AAVMF/AAVMF_VARS.fd
 
 $(BUILD)/OVMF_VARS.fd: $(OVMF_VARS)
 	cp $< $@

@@ -731,6 +731,44 @@ static void test_status_text(void)
     CHECK(finte_strcmp(finte_disk_error(-99), "disk error") == 0);
 }
 
+static void test_pmm(void)
+{
+    (void)pmm_init(NULL, 0, 0);
+    CHECK(pmm_active() == 0);
+
+    fboot_mmap_entry_t map[1];
+    map[0].base = 0x100000;
+    map[0].length = 0x10000;
+    map[0].type = FINTE_BOOT_MMAP_USABLE;
+    map[0].flags = 0;
+    fboot_info_t bi;
+    finte_memset(&bi, 0, sizeof(bi));
+    bi.flags = FINTE_BOOT_FLAG_MEMMAP;
+    bi.memmap_addr = (uint64_t)(uintptr_t)map;
+    bi.memmap_count = 1;
+    bi.memmap_desc_size = sizeof(map[0]);
+
+    CHECK(pmm_init(&bi, 0x100000, 0x110000) == 0);
+    CHECK(pmm_active() == 1);
+    CHECK(pmm_total_pages() == 16);
+    CHECK(pmm_free_page_count() == 16);
+    CHECK(pmm_reserve(0x100000, 0x1000) == 0);
+    CHECK(pmm_free_page_count() == 15);
+    uint64_t a = pmm_alloc_pages(1);
+    CHECK(a == 0x101000);
+    uint64_t b = pmm_alloc_pages(2);
+    CHECK(b == 0x102000);
+    CHECK(pmm_owns(a, 4096) == 1);
+    CHECK(pmm_owns(b, 8192) == 1);
+    CHECK(pmm_owns(0x200000, 4096) == 0);
+    pmm_free_pages(b, 2);
+    CHECK(pmm_free_page_count() == 14);
+    pmm_free_pages(a, 1);
+    CHECK(pmm_free_page_count() == 15);
+    CHECK(pmm_init(NULL, 0, 0) != 0);
+    CHECK(pmm_active() == 0);
+}
+
 static void test_boot_protocol(void)
 {
     fboot_info_t bi;
@@ -811,6 +849,7 @@ static const struct testcase g_tests[] = {
     { "ANSI SGR parser", test_ansi },
     { "status text", test_status_text },
     { "boot protocol", test_boot_protocol },
+    { "physical memory manager", test_pmm },
     { "formatter", test_format },
 };
 

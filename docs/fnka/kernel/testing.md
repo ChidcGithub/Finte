@@ -27,7 +27,7 @@ a named platform.
 | Level | Purpose | Current examples |
 | --- | --- | --- |
 | Compile-time | Types, warnings, architecture builds | `make all`, `make images`, `build-win.bat` |
-| Unit tests | Objects, caps, queues, allocators, boot protocol | `make test` (21 host tests) |
+| Unit tests | Objects, caps, queues, allocators, boot protocol, PMM | `make test` (22 host tests) |
 | Kernel self-tests | Controlled kernel environment | 147 checks, 6 sections |
 | QEMU boot tests | Startup, shell, exceptions, timers | `make qemu-test`, `make qemu-uefi-test` |
 | Integration tests | Userland, IPC, storage, drivers | `make qemu-disk-test`, `procs`, `services` |
@@ -37,13 +37,14 @@ a named platform.
 ## 3. Current commands
 
 ```bash
-make test                 # 21 host tests
+make test                 # 22 host tests
 make selfcheck            # 147 core checks on the host
 make qemu-test            # BIOS boot and CLI checks
 make qemu-uefi-test       # UEFI/OVMF boot and CLI checks
 make qemu-disk-test       # BIOS + ATA PIO + lfc1/ext4/NTFS
 make qemu-uefi-disk-test  # UEFI + AHCI + filesystems
-make arm64-test           # arm64 QEMU virt, 147 core checks
+make arm64-test           # arm64 QEMU virt, 4 CPUs: MMU/timer/SMP + 147 core checks
+make arm64-uefi-test      # same arm64 platform checks under AAVMF
 make images               # x86_64 and arm64 IMG/ISO release media
 ```
 
@@ -65,12 +66,12 @@ matrix.
 | Boot to kernel entry | Passing | Passing | BIOS/UEFI; `-kernel` and AAVMF |
 | Boot protocol v1 | Passing | Passing | E820/UEFI map, ACPI/DTB, modules, validator |
 | Core self-tests | Passing (147) | Passing (147) | Same core suite |
-| Physical allocator | Partial | Partial | Static heap + page cache |
-| Virtual memory | Partial | Missing | x86 paging only |
-| Exception handling | Passing | Vectors only | arm64 faults park the CPU |
-| Interrupt dispatch | Passing | Missing | No GIC/timer IRQ on arm64 |
-| Timer operation | Passing | Counter only | No timer interrupt on arm64 |
-| SMP startup | Passing | Missing | x86 up to 8 CPUs |
+| Physical allocator | Passing | Passing | Shared PMM from boot map; static-heap fallback |
+| Virtual memory | Partial | Partial | x86 user VM; arm64 identity MMU |
+| Exception handling | Passing | Partial | arm64 IRQ returns; sync faults panic |
+| Interrupt dispatch | Passing | Passing | x86 IDT/APIC; arm64 GICv2 |
+| Timer operation | Passing | Passing | x86 PIT/LAPIC; arm64 PPI 30 at 100 Hz |
+| SMP startup | Passing | Passing | x86 and arm64 up to 8 CPUs; 4-CPU tests |
 | Work stealing | Disabled | N/A | `steal_one()` guarded by `&& 0` |
 | Flow lifecycle | Passing | Passing | Core checks |
 | Thread execution entity | Passing | Passing | Internal one-per-Flow Thread; host split test |
@@ -82,7 +83,7 @@ matrix.
 
 ## 5. Current coverage gaps
 
-- No arm64 MMU, exception recovery, GIC, timer IRQ, IPI or SMP tests.
+- No arm64 sync-exception recovery, user-mode fault policy or GICv3 test.
 - No arm64 user mode or syscall tests.
 - No work-stealing stress test; stealing is disabled.
 - No multi-Thread or Parallel Flow test.

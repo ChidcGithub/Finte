@@ -51,7 +51,7 @@ make initrd         # build/initrd.bin
 make image          # build/finte.img (BIOS + UEFI USB image)
 make images         # x86_64 + arm64 ISO and IMG release media
 make iso            # both ISO images only
-make test           # 21 extended self-tests (host)
+make test           # 22 extended self-tests (host)
 make selfcheck      # startup POST/self-check suite (host)
 make demo           # host-side native pipeline
 make compat         # host-side Linux persona
@@ -301,7 +301,7 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 
 ## Test matrix
 
-- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 21 host tests, BIOS CLI boot
+- WSL Ubuntu 26.04 / GCC 15 / QEMU 10.2 SeaBIOS: 22 host tests, BIOS CLI boot
   test, boot protocol v1 with E820 and ramdisk module, kernel POST, USB
   mass-storage boot, VGA screenshot, PS/2 keyboard, timer preemption
   (`preempt=OK`), ring-3 `user`/`procs`, 4-CPU SMP boot.
@@ -321,12 +321,13 @@ A Windows process is holding the directory. Close QEMU/editors or remove
   `user`/`procs`, 4-CPU SMP, screenshot.
 - UEFI disk manager: AHCI, MBR, mount/read/fsinfo/umount for lfc1, ext4 and
   NTFS from `hd1`; writable lfc1.
-- arm64 AAVMF: boot protocol v1, memory map/ACPI, 147 core checks, ISO and IMG
-  boot.
+- arm64 AAVMF: boot protocol v1, memory map/ACPI, PMM, MMU (48-bit identity),
+  GICv2 timer ticks, 4-CPU PSCI startup, per-CPU flow hits, 147 core checks,
+  ISO and IMG boot.
 - Windows 11 QEMU GTK GUI: UEFI boot, 1280x800 window, PS/2/serial shell.
 - Windows 11 QEMU + WHPX: 4-CPU boot, UEFI disk write/read, real keyboard
   input, `preempt` ~135 ms (vs ~397 ms TCG).
-- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 21 tests,
+- Windows 11 / clang-cl 23 / MSVC Build Tools: native host build, 22 tests,
   self-check, demo, compat, benchmark.
 
 Physical laptop validation is still pending; the image is built for both BIOS
