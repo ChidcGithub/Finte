@@ -96,6 +96,7 @@ arm64-test: arm64
 	  -kernel $(BUILD)/finte-arm64.elf > $(BUILD)/arm64.log 2>&1 || true
 	@if grep -q "arm64 self-check: PASS" $(BUILD)/arm64.log && \
 	    grep -Eq "mmu: (39|48)-bit identity map enabled" $(BUILD)/arm64.log && \
+	    grep -q "mmu: identity translations ok" $(BUILD)/arm64.log && \
 	    grep -q "arm64 timer: gic=v2 ticks=[1-9]" $(BUILD)/arm64.log && \
 	    grep -q "arm64 smp: 3 application processor(s) online, 4 cpu(s) total" $(BUILD)/arm64.log && \
 	    grep -q "arm64 smp: hits=2/2/2/2" $(BUILD)/arm64.log; then \

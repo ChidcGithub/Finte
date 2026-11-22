@@ -25,6 +25,7 @@ for pat in \
     'arm64 self-check: PASS' \
     'boot: protocol v1' \
     'pmm: usable=' \
+    'mmu: identity translations ok' \
     'arm64 timer: gic=v2 ticks=' \
     'arm64 smp: 3 application processor(s) online, 4 cpu(s) total' \
     'arm64 smp: hits=2/2/2/2'; do

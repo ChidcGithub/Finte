@@ -10,6 +10,18 @@ extern int arm64_mmu_va_bits(void);
 
 static volatile uint32_t g_smp_hits[FINTE_MAX_CPUS];
 
+static int arm64_translates(uint64_t va, uint64_t *pa)
+{
+    uint64_t par;
+    __asm__ volatile("at s1e1r, %1; isb; mrs %0, par_el1"
+                     : "=r"(par) : "r"(va) : "memory");
+    if (par & 1ull) {
+        return 0;
+    }
+    *pa = (par & 0x0000FFFFFFFFF000ull) | (va & 0xFFFull);
+    return 1;
+}
+
 static void smp_probe_flow(fflow_t *f)
 {
     (void)f;
@@ -92,6 +104,16 @@ void kmain_arm64(uint64_t boot_arg, uint64_t magic)
                               arm64_mmu_va_bits());
         if (mn > 0) {
             hal_console_write(mmu, (size_t)mn);
+        }
+        uint64_t kpa = 0;
+        uint64_t dev_pa = 0;
+        if (arm64_translates(0x40080000ull, &kpa) &&
+            arm64_translates(0x09000000ull, &dev_pa) &&
+            kpa == 0x40080000ull && dev_pa == 0x09000000ull) {
+            aputs("mmu: identity translations ok\n");
+        } else {
+            aputs("mmu: identity translations FAILED\n");
+            hal_exit(1);
         }
     } else {
         aputs("mmu: identity map unavailable\n");
