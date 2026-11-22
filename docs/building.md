@@ -73,6 +73,10 @@ make clean
 to 4 CPUs. `ACCEL` automatically uses KVM when `/dev/kvm` is writable and falls
 back to TCG; override it with `make qemu ACCEL="-accel tcg"`.
 
+The x86 kernel and user programs are built with `-march=x86-64 -mtune=generic`.
+Keep that pin: some CI clang installations target x86-64-v3 and emit BMI2
+instructions such as `shlx`, which the QEMU `qemu64` guest does not implement.
+
 The image targets need Linux/WSL. The host simulator also builds natively on
 Windows.
 

@@ -14,6 +14,9 @@ Short notes only. GitHub releases carry the per-commit changes.
 - Added the x86_64 `abi-test` and extended the arm64 boot tests with the shared
   process ABI suite, including a capability service registry and fixed-address
   ET_DYN shared-object loading.
+- Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
+  compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
+  harness boots the BIOS floppy image and reports boot milestones on COM1.
 - Host suite is now 24 tests, including address-space refcount/lifetime and
   RX/RW-NX checks.
 

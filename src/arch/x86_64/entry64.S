@@ -9,6 +9,10 @@ _start64:
     mov $0x3f8, %dx
     mov $'K', %al
     out %al, %dx
+    mov $'\r', %al
+    out %al, %dx
+    mov $'\n', %al
+    out %al, %dx
 
     /* BIOS stage2 already installed flat data selectors. UEFI has its own
      * valid long-mode selectors; segment bases are ignored in long mode, so
@@ -17,12 +21,8 @@ _start64:
     /* Keep the boot hand-off across the bss clear. */
     mov %rdi, %r12
     mov %rsi, %r13
-    mov $'A', %al
-    out %al, %dx
 
     mov $stack_top, %rsp
-    mov $'B', %al
-    out %al, %dx
 
     lea __bss_start(%rip), %rdi
     lea __bss_end(%rip), %rcx
@@ -30,14 +30,10 @@ _start64:
     shr $3, %rcx
     xor %eax, %eax
     rep stosq
-    mov $'C', %al
-    out %al, %dx
 
     mov %r12, %rdi
     mov %r13, %rsi
     and $-16, %rsp
-    mov $'D', %al
-    out %al, %dx
     call kmain
 
 2:  cli

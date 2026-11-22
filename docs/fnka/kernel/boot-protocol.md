@@ -92,6 +92,9 @@ the ramdisk as module 0. arm64 UEFI has no ramdisk in v1.
   to 64 entries;
 - fills `memmap_addr`, `memmap_count`, `memmap_desc_size = 24` and the
   `MEMMAP` flag;
+- writes COM1 boot milestones (`B1`, geometry `g`, stage-2 `R`/`J`, then
+  `AGHKRP` for A20/geometry/header/kernel/ramdisk/pre-long-mode) so a headless
+  boot failure can be localized before the kernel console exists;
 - enters long mode and jumps with `RDI=0x5000`, `RSI=FINTE_BOOT_MAGIC`.
 
 The map is accessible through the kernel's low identity map.
