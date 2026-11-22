@@ -19,6 +19,17 @@ jobs:
             e2fsprogs ntfs-3g
       - name: Build images
         run: make images
+      - name: Show toolchain
+        run: |
+          cc --version | head -1
+          clang --version | head -1
+          qemu-system-x86_64 --version | head -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finte-pre-abi
+          path: |
+            build/kernel64.elf
+            build/finte-bios.img
       - name: Run host and core checks
         run: |
           make test
