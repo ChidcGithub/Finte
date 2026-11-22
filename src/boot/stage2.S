@@ -47,6 +47,8 @@ _start:
     mov al, 'S'
     mov si, msg_stage2
     call serial_puts
+    mov al, '2'
+    call serial_putc
     call bios_puts
 
     /* Fast A20. */
@@ -54,6 +56,8 @@ _start:
     or al, 0x02
     and al, 0xFE
     out 0x92, al
+    mov al, 'A'
+    call serial_putc
 
     /* Read CHS geometry. */
     xor ax, ax
@@ -72,6 +76,7 @@ _start:
     jz geometry_error
     mov [heads], al
     mov al, 'G'
+    call serial_putc
 
     /* Read the image header (one sector) to 0x6000. */
     mov dword ptr [load_lba], 33
@@ -80,6 +85,7 @@ _start:
     call load_region
 
     mov al, 'H'
+    call serial_putc
     cmp dword ptr [HEADER_ADDR + 0], 0x46494E48
     jne header_error
     mov eax, [HEADER_ADDR + 0x18]       /* kernel_size */
@@ -99,6 +105,7 @@ _start:
     mov word ptr [load_seg], 0x1000
     call load_region
     mov al, 'K'
+    call serial_putc
 
     /* Ramdisk to 0x40000, if present. */
     mov ax, [HEADER_ADDR + 0x14]
@@ -113,6 +120,7 @@ _start:
 
 no_ramdisk:
     mov al, 'R'
+    call serial_putc
 
     /* Boot information consumed by the kernel at 0x5000. */
     xor ax, ax
@@ -166,6 +174,7 @@ no_ramdisk:
     call serial_puts
     call bios_puts
     mov al, 'P'
+    call serial_putc
 
     cli
     lgdt [gdt_desc]

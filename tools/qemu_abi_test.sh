@@ -21,7 +21,7 @@ run_once() {
         return 1
     fi
     qemu-system-x86_64 -m 256M -smp 1 -machine pc -accel tcg \
-        -fda build/finte-bios.img -boot a \
+        -drive if=floppy,format=raw,file=build/finte-bios.img -boot a \
         -display none -monitor none -no-reboot -snapshot \
         -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
         -serial stdio -D "$QEMULOG" -d guest_errors < "$FIFO" > "$LOG" 2>&1 &
@@ -78,7 +78,7 @@ run_once() {
             -serial none -monitor none -no-reboot -S >/dev/null 2>&1
         echo "minimal qemu probe status: $?"
         timeout 10 qemu-system-x86_64 -m 256M -smp 1 -machine pc \
-            -accel tcg -fda build/finte-bios.img -boot a \
+            -accel tcg -drive if=floppy,format=raw,file=build/finte-bios.img -boot a \
             -display none -monitor none -no-reboot -snapshot \
             -serial "file:$PROBELOG" -D "$PROBELOG.qemu" \
             -d guest_errors,cpu_reset >/dev/null 2>&1
