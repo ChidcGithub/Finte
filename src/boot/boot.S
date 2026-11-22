@@ -21,8 +21,11 @@ _start:
     mov ss, ax
     mov sp, 0x7C00
     mov [boot_drive], dl
+    call serial_init
+    mov al, 'B'
+    call serial_putc
     mov al, '1'
-    mov al, dl
+    call serial_putc
 
     mov si, msg_loading
     call bios_puts
@@ -49,6 +52,7 @@ _start:
     jz disk_error
     mov [heads], al
     mov al, 'g'
+    call serial_putc
 
     /* Read stage2 one sector at a time: LBA 1..32 = C0,H0,S2... */
     mov byte ptr [cyl], 0
@@ -90,21 +94,70 @@ read_loop:
 
 read_done:
     mov al, 'R'
+    call serial_putc
     mov si, msg_stage2
     call bios_puts
     mov al, 'J'
+    call serial_putc
     mov dl, [boot_drive]
     jmp 0x0000:STAGE2_LOAD
 
 disk_error:
     mov al, 'E'
+    call serial_putc
     mov al, ah
+    add al, '0'
+    call serial_putc
     mov si, msg_error
     call bios_puts
 1:
     cli
     hlt
     jmp 1b
+
+serial_init:
+    push dx
+    push ax
+    mov dx, 0x3F8 + 1
+    xor al, al
+    out dx, al
+    mov dx, 0x3F8 + 3
+    mov al, 0x80
+    out dx, al
+    mov dx, 0x3F8 + 0
+    mov al, 1
+    out dx, al
+    mov dx, 0x3F8 + 1
+    xor al, al
+    out dx, al
+    mov dx, 0x3F8 + 3
+    mov al, 0x03
+    out dx, al
+    mov dx, 0x3F8 + 2
+    mov al, 0xC7
+    out dx, al
+    mov dx, 0x3F8 + 4
+    mov al, 0x0B
+    out dx, al
+    pop ax
+    pop dx
+    ret
+
+serial_putc:
+    push dx
+    push ax
+    mov dx, 0x3F8 + 5
+3:
+    in al, dx
+    test al, 0x20
+    jz 3b
+    pop ax
+    push ax
+    mov dx, 0x3F8
+    out dx, al
+    pop ax
+    pop dx
+    ret
 
 bios_puts:
     push ax
