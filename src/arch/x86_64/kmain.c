@@ -11,6 +11,13 @@
 void faults_init(void);
 void finte_kernel_post(uint64_t boot_arg, uint64_t magic);
 
+static void early_putc(char c)
+{
+    __asm__ volatile("outb %0, %1"
+                     :
+                     : "a"((unsigned char)c), "Nd"((unsigned short)0x3F8));
+}
+
 extern char __kernel_end[];
 
 static uint64_t read_cr3(void)
@@ -106,6 +113,7 @@ static void kprintf(const char *fmt, ...)
 
 void kmain(uint64_t boot_arg, uint64_t magic)
 {
+    early_putc('F');
     const fboot_info_t *bi = NULL;
     int boot_error = FINTE_BOOT_OK;
     if (magic == FINTE_BOOT_MAGIC) {
@@ -115,15 +123,22 @@ void kmain(uint64_t boot_arg, uint64_t magic)
             bi = candidate;
         }
     }
+    early_putc('G');
 
     hal_boot_info(bi);
     blk_boot_info(bi);
     input_boot(bi);
+    early_putc('H');
     pmm_boot_reserve(bi);
+    early_putc('I');
     hal_init();
+    early_putc('J');
     faults_init();
+    early_putc('K');
     usermode_prepare();
+    early_putc('L');
     timer_init();
+    early_putc('M');
     kputs("Finte " FINTE_VERSION_STRING " | x86_64 bare metal\n");
     if (bi) {
         kprintf("boot: %s -> long mode -> 1 GiB identity map\n",
