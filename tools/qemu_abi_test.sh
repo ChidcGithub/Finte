@@ -58,9 +58,23 @@ run_once() {
     if kill -0 "$qpid" 2>/dev/null; then
         kill "$qpid" 2>/dev/null
     fi
+    local qstatus=0
     wait "$qpid" 2>/dev/null
-    echo "qemu pass=$pass" >> "$LOG"
+    qstatus=$?
+    echo "qemu pass=$pass status=$qstatus" >> "$LOG"
     rm -f "$FIFO"
+    if [ "$pass" -eq 0 ] && [ "$qstatus" -ne 0 ]; then
+        {
+            echo "--- QEMU diagnostics ---"
+            uname -m
+            command -v qemu-system-x86_64 || echo "qemu binary missing"
+            qemu-system-x86_64 --version 2>&1 | head -2 || true
+            echo "qemu exit status: $qstatus"
+            timeout 3 qemu-system-x86_64 -machine pc -accel tcg -display none \
+                -serial none -monitor none -no-reboot -S >/dev/null 2>&1
+            echo "minimal qemu probe status: $?"
+        } >> "$LOG"
+    fi
     grep -q "abi: PASS" "$LOG" &&
         grep -Fq "abi] space=OK user=OK fork=OK exec=OK signal=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK" "$LOG"
 }
