@@ -2137,10 +2137,10 @@ int finte_usermode_run(const char *name)
     }
     finte_proc_destroy(p);
     uint64_t pm1 = pmm_active() ? pmm_free_page_count() : 0;
-    if (pmm_active() && pm1 != pm0) {
+    if (pmm_active() && pm1 < pm0) {
         char buf[96];
         int n = finte_format(buf, sizeof(buf),
-                             "[user] pmm free %llu -> %llu\n",
+                             "[user] pmm leak %llu -> %llu\n",
                              (unsigned long long)pm0,
                              (unsigned long long)pm1);
         hal_console_write(buf, (size_t)n);
