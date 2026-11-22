@@ -565,6 +565,33 @@ fproc_t *finte_proc_find(uint32_t pid)
     return found;
 }
 
+static int proc_pgid_exists(uint32_t pgid)
+{
+    uint64_t flags = proc_lock();
+    int found = 0;
+    for (uint32_t i = 0; i < FPROC_MAX_PROCS; i++) {
+        if (g_procs[i] && g_procs[i]->pgid == pgid) {
+            found = 1;
+            break;
+        }
+    }
+    proc_unlock(flags);
+    return found;
+}
+
+static int proc_collect_pgid(uint32_t pgid, fproc_t **out, uint32_t max)
+{
+    uint64_t flags = proc_lock();
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < FPROC_MAX_PROCS && n < max; i++) {
+        if (g_procs[i] && g_procs[i]->pgid == pgid) {
+            out[n++] = g_procs[i];
+        }
+    }
+    proc_unlock(flags);
+    return (int)n;
+}
+
 static uint32_t proc_alloc_pid(void)
 {
     for (uint32_t tries = 0; tries < 0x10000u; tries++) {
@@ -1060,6 +1087,7 @@ fproc_t *finte_proc_create(const char *name, const char *elf, uint32_t pid,
         return NULL;
     }
     p->pid = pid;
+    p->pgid = pid;
     p->shared_phys = shared_phys;
     p->ipc_cap = -1;
     p->arena_cap = -1;
@@ -1532,17 +1560,10 @@ static int sys_munmap(fproc_t *p, uint64_t va, uint64_t len)
     return -1;
 }
 
-static int sys_kill(fproc_t *p, uint64_t pid, uint64_t sig)
+static void proc_deliver_signal(fproc_t *target, uint64_t sig)
 {
-    if (!p || sig >= FPROC_MAX_SIGNALS) {
-        return -1;
-    }
-    if (sig == 0) {
-        return 0;
-    }
-    fproc_t *target = finte_proc_find((uint32_t)pid);
     if (!target) {
-        return -1;
+        return;
     }
     finte_core_lock();
     if (sig == FPROC_SIGSTOP) {
@@ -1568,7 +1589,70 @@ static int sys_kill(fproc_t *p, uint64_t pid, uint64_t sig)
     if (target->flow && target->flow->thread) {
         finte_sched_wake_thread(target->flow->thread);
     }
+}
+
+static int sys_kill(fproc_t *p, uint64_t pid, uint64_t sig)
+{
+    if (!p || sig >= FPROC_MAX_SIGNALS) {
+        return -1;
+    }
+    int32_t target = (int32_t)pid;
+    if (target <= 0) {
+        uint32_t pgid = (target == 0) ? p->pgid
+                                     : (uint32_t)(-(int64_t)target);
+        fproc_t *members[FPROC_MAX_PROCS];
+        int n = proc_collect_pgid(pgid, members, FPROC_MAX_PROCS);
+        if (n <= 0) {
+            return -1;
+        }
+        if (sig == 0) {
+            return 0;
+        }
+        for (int i = 0; i < n; i++) {
+            proc_deliver_signal(members[i], sig);
+        }
+        return 0;
+    }
+    fproc_t *t = finte_proc_find((uint32_t)target);
+    if (!t) {
+        return -1;
+    }
+    if (sig == 0) {
+        return 0;
+    }
+    proc_deliver_signal(t, sig);
     return 0;
+}
+
+static int sys_setpgid(fproc_t *p, uint64_t pid, uint64_t pgid)
+{
+    if (!p) {
+        return -1;
+    }
+    int32_t tpid = (int32_t)pid;
+    if (tpid < 0 || (int32_t)pgid < 0) {
+        return -1;
+    }
+    fproc_t *target = (tpid == 0) ? p : finte_proc_find((uint32_t)tpid);
+    if (!target || (target != p && target->parent != p)) {
+        return -1;
+    }
+    uint32_t group = (pgid == 0) ? target->pid : (uint32_t)pgid;
+    if (group == 0) {
+        return -1;
+    }
+    if (group != target->pid && !proc_pgid_exists(group)) {
+        return -1;
+    }
+    finte_core_lock();
+    target->pgid = group;
+    finte_core_unlock();
+    return 0;
+}
+
+static uint64_t sys_getpgrp(fproc_t *p)
+{
+    return p ? (uint64_t)p->pgid : 0;
 }
 
 static uint64_t sys_sigprocmask(fproc_t *p, uint64_t how, uint64_t mask)
@@ -1738,7 +1822,13 @@ uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
         return p ? p->pid : 1u;
     }
     if (nr == FPROC_SYS_WAITPID) {
-        return (uint64_t)finte_proc_waitpid(p, (uint32_t)a0, a1, (int)a2);
+        return (uint64_t)finte_proc_waitpid(p, (int32_t)a0, a1, (int)a2);
+    }
+    if (nr == FPROC_SYS_SETPGID) {
+        return (uint64_t)sys_setpgid(p, a0, a1);
+    }
+    if (nr == FPROC_SYS_GETPGRP) {
+        return sys_getpgrp(p);
     }
     if (nr == FPROC_SYS_EXIT) {
         if (p && f) {
@@ -1964,6 +2054,7 @@ uint64_t finte_proc_fork(fproc_t *parent, void *frame)
     }
     child->flow->user = child;
     child->parent = parent;
+    child->pgid = parent->pgid;
     child->sig_blocked = parent->sig_blocked;
     for (uint32_t i = 1; i < FPROC_MAX_SIGNALS; i++) {
         child->sigs[i].handler = parent->sigs[i].handler;
@@ -1988,7 +2079,58 @@ uint64_t finte_proc_fork(fproc_t *parent, void *frame)
     return child->pid;
 }
 
-int finte_proc_waitpid(fproc_t *p, uint32_t pid, uint64_t status_uva,
+static int proc_child_matches(fproc_t *parent, fproc_t *c, int32_t pid)
+{
+    if (pid > 0) {
+        return c->pid == (uint32_t)pid;
+    }
+    if (pid == 0) {
+        return c->pgid == parent->pgid;
+    }
+    if (pid == -1) {
+        return 1;
+    }
+    return c->pgid == (uint32_t)(-(int64_t)pid);
+}
+
+enum { FPROC_WAIT_NONE, FPROC_WAIT_EXIT, FPROC_WAIT_STOP, FPROC_WAIT_CONT };
+
+/* Pick the first matching child with a reportable event. Exits win over
+ * stop/continue events only when encountered first; POSIX allows any
+ * eligible child to be reported. */
+static fproc_t *proc_wait_scan(fproc_t *p, int32_t pid, int options,
+                               int *event, fproc_t **block_on)
+{
+    fproc_t *match = NULL;
+    *event = FPROC_WAIT_NONE;
+    *block_on = NULL;
+    for (fproc_t *c = p->children; c; c = c->next_sibling) {
+        if (!proc_child_matches(p, c, pid)) {
+            continue;
+        }
+        if (!match) {
+            match = c;
+        }
+        if (!c->flow) {
+            *event = FPROC_WAIT_EXIT;
+            return c;
+        }
+        if (!*block_on) {
+            *block_on = c;
+        }
+        if ((options & FPROC_WUNTRACED) && c->stop_pending && c->stop_acked) {
+            *event = FPROC_WAIT_STOP;
+            return c;
+        }
+        if ((options & FPROC_WCONTINUED) && c->cont_pending) {
+            *event = FPROC_WAIT_CONT;
+            return c;
+        }
+    }
+    return match;
+}
+
+int finte_proc_waitpid(fproc_t *p, int32_t pid, uint64_t status_uva,
                        int options)
 {
     const int allowed = FPROC_WNOHANG | FPROC_WUNTRACED | FPROC_WCONTINUED;
@@ -1996,66 +2138,48 @@ int finte_proc_waitpid(fproc_t *p, uint32_t pid, uint64_t status_uva,
         return -1;
     }
     fproc_t *child = NULL;
-    for (fproc_t *c = p->children; c; c = c->next_sibling) {
-        if (pid == 0 || pid == (uint32_t)-1 || c->pid == pid) {
-            child = c;
+    int event = FPROC_WAIT_NONE;
+    for (;;) {
+        fproc_t *block_on = NULL;
+        child = proc_wait_scan(p, pid, options, &event, &block_on);
+        if (!child) {
+            return -1;
+        }
+        if (event != FPROC_WAIT_NONE) {
             break;
         }
-    }
-    if (!child) {
-        return -1;
-    }
-    int stop_event = 0;
-    int cont_event = 0;
-    if (!(options & (FPROC_WNOHANG | FPROC_WUNTRACED | FPROC_WCONTINUED))) {
-        /* Block until the child's flow exits. Flow exit clears child->flow
-         * before waking waiters, and the process keeps the flow handle
-         * referenced, so the flow object cannot be recycled under us. */
-        while (child->flow) {
-            finte_flow_wait_for(p->flow, child->flow);
+        if (options & FPROC_WNOHANG) {
+            return 0;
         }
-    } else {
-        for (;;) {
-            if (!child->flow) {
-                break;
-            }
-            if ((options & FPROC_WUNTRACED) && child->stop_pending &&
-                child->stop_acked) {
-                stop_event = 1;
-                break;
-            }
-            if ((options & FPROC_WCONTINUED) && child->cont_pending) {
-                cont_event = 1;
-                break;
-            }
-            if (options & FPROC_WNOHANG) {
-                return 0;
-            }
+        if (options & (FPROC_WUNTRACED | FPROC_WCONTINUED)) {
+            /* Stop/continue acknowledgements have no wake channel; poll. */
             finte_flow_sleep(p->flow, 1000000ull);
+        } else {
+            /* Flow exit clears child->flow before waking waiters, and the
+             * process keeps the flow handle referenced, so the flow object
+             * cannot be recycled under us. */
+            finte_flow_wait_for(p->flow, block_on->flow);
         }
     }
     int status = 0;
-    if (!child->flow) {
+    if (event == FPROC_WAIT_EXIT) {
         status = child->faulted ? -1
                                 : (int)((child->exit_code & 0xFFu) << 8);
-    } else if (stop_event) {
+    } else if (event == FPROC_WAIT_STOP) {
         status = (FPROC_SIGSTOP << 8) | 0x7F;
-    } else if (cont_event) {
-        status = 0xFFFF;
     } else {
-        return 0;
+        status = 0xFFFF;
     }
     if (status_uva != 0 &&
         proc_copy_out(p->space, status_uva, &status, sizeof(status)) != 0) {
         return -1;
     }
-    if (child->flow) {
-        if (stop_event) {
-            child->stop_pending = 0;
-        }
-        if (cont_event) {
-            child->cont_pending = 0;
-        }
+    if (event == FPROC_WAIT_STOP) {
+        child->stop_pending = 0;
+        return (int)child->pid;
+    }
+    if (event == FPROC_WAIT_CONT) {
+        child->cont_pending = 0;
         return (int)child->pid;
     }
     fproc_t **link = &p->children;
@@ -2526,6 +2650,8 @@ int finte_proc_abi_test(void)
     hal_console_write("[abi] stage sigset done\n", 25);
     int job_rc = finte_usermode_run("job.elf");
     hal_console_write("[abi] stage job done\n", 22);
+    int pgroup_rc = finte_usermode_run("pgroup.elf");
+    hal_console_write("[abi] stage pgroup done\n", 25);
     int cap_rc = proc_cap_test();
     hal_console_write("[abi] stage cap done\n", 22);
     int svc_rc = proc_service_test();
@@ -2561,14 +2687,15 @@ int finte_proc_abi_test(void)
     int n = finte_format(buf, sizeof(buf),
                          "[abi] space=%s user=%s fork=%s wait=%s cow=%s "
                          "filemap=%s exec=%s signal=%s sigset=%s job=%s "
-                         "cap=%s service=%s bad=%s dyn=%s churn=%s "
-                         "blocked=%s\n",
+                         "pgroup=%s cap=%s service=%s bad=%s dyn=%s "
+                         "churn=%s blocked=%s\n",
                          ok_str(space_ok), ok_str(abi == 0),
                          ok_str(fork_rc == 0), ok_str(wait_rc == 0),
                          ok_str(cow_rc == 0), ok_str(filemap_rc == 0),
                          ok_str(exec_rc == 0),
                          ok_str(sig_rc == 0), ok_str(sigset_rc == 0),
-                         ok_str(job_rc == 0), ok_str(cap_rc == 0),
+                         ok_str(job_rc == 0), ok_str(pgroup_rc == 0),
+                         ok_str(cap_rc == 0),
                          ok_str(svc_rc == 0), ok_str(bad_rc == 0),
                          ok_str(dyn_rc == 0), ok_str(churn_rc == 0),
                          ok_str(blocked_ok));
@@ -2578,8 +2705,8 @@ int finte_proc_abi_test(void)
     hal_watchdog_resume();
     return (space_ok && abi == 0 && fork_rc == 0 && wait_rc == 0 &&
             cow_rc == 0 && filemap_rc == 0 && exec_rc == 0 &&
-            sig_rc == 0 && sigset_rc == 0 && job_rc == 0 && cap_rc == 0 &&
-            svc_rc == 0 &&
+            sig_rc == 0 && sigset_rc == 0 && job_rc == 0 &&
+            pgroup_rc == 0 && cap_rc == 0 && svc_rc == 0 &&
             bad_rc == 0 && dyn_rc == 0 && churn_rc == 0 &&
             blocked_ok) ? 0 : FINTE_ERR_STATE;
 }

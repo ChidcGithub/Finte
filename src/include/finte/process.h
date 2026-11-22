@@ -88,6 +88,8 @@
 #define FPROC_SIGCONT          18
 #define FPROC_SIGSTOP          19
 #define FPROC_SYS_SIGPROCMASK  41
+#define FPROC_SYS_SETPGID      42
+#define FPROC_SYS_GETPGRP      43
 #define FPROC_SIG_BLOCK        0
 #define FPROC_SIG_UNBLOCK      1
 #define FPROC_SIG_SETMASK      2
@@ -137,6 +139,7 @@ struct faddr_space {
 
 struct fproc {
     uint32_t pid;
+    uint32_t pgid;
     uint32_t cpu;
     faddr_space_t *space; /* weak: the Flow owns the reference */
     uint64_t entry;
@@ -231,7 +234,7 @@ fproc_t *finte_proc_create(const char *name, const char *elf, uint32_t pid,
 int finte_proc_start(fproc_t *p);
 void finte_proc_destroy(fproc_t *p);
 fproc_t *finte_proc_find(uint32_t pid);
-int finte_proc_waitpid(fproc_t *p, uint32_t pid, uint64_t status_uva,
+int finte_proc_waitpid(fproc_t *p, int32_t pid, uint64_t status_uva,
                        int options);
 uint64_t finte_proc_syscall(fproc_t *p, uint64_t nr, uint64_t a0, uint64_t a1,
                             uint64_t a2, void *frame);

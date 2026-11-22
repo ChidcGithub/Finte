@@ -35,6 +35,12 @@ Short notes only. GitHub releases carry the per-commit changes.
   indefinite sleeper, SIGCONT wakes it, and `waitpid` reports stops with
   WUNTRACED and continues with WCONTINUED. Exit status is now POSIX-encoded as
   `(code & 0xFF) << 8`; `job.elf` covers stop, continue and the SIGTERM exit.
+- Added process groups: each process has a `pgid`, `setpgid`/`getpgrp` manage
+  it, `kill(-pgid)` targets every member, `waitpid(-pgid)` selects children in
+  a group, and group SIGSTOP/SIGCONT/SIGTERM drive the whole job. `waitpid`
+  now rescans all matching children per event, so one stopped child no longer
+  hides another. The new `pgroup.elf` covers group membership, group stop,
+  continue, terminate and statuses; the shared ABI line reports `pgroup=OK`.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

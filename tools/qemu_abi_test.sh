@@ -12,7 +12,7 @@ LOG=build/abi-x86.log
 QEMULOG=build/abi-x86-qemu.log
 PROBELOG=build/abi-x86-probe.log
 FIFO=${TMPDIR:-/tmp}/finte-abi-$$.in
-ABI_LINE="abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK"
+ABI_LINE="abi] space=OK user=OK fork=OK wait=OK cow=OK filemap=OK exec=OK signal=OK sigset=OK job=OK pgroup=OK cap=OK service=OK bad=OK dyn=OK churn=OK blocked=OK"
 
 run_once() {
     rm -f "$LOG" "$QEMULOG" "$PROBELOG" "$PROBELOG.qemu" "$FIFO"
