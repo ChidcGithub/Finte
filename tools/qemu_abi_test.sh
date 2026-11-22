@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.." || exit 1
 mkdir -p build
 LOG=build/abi-x86.log
 QEMULOG=build/abi-x86-qemu.log
+PROBELOG=build/abi-x86-probe.log
 FIFO=${TMPDIR:-/tmp}/finte-abi-$$.in
 
 run_once() {
@@ -73,6 +74,23 @@ run_once() {
             timeout 3 qemu-system-x86_64 -machine pc -accel tcg -display none \
                 -serial none -monitor none -no-reboot -S >/dev/null 2>&1
             echo "minimal qemu probe status: $?"
+            rm -f "$PROBELOG" "$PROBELOG.qemu"
+            timeout 10 qemu-system-x86_64 -m 256M -smp 1 -machine pc \
+                -accel tcg \
+                -drive format=raw,file=build/finte.img,if=ide,index=0,media=disk \
+                -boot c -display none -monitor none -no-reboot \
+                -serial "file:$PROBELOG" -D "$PROBELOG.qemu" \
+                -d guest_errors,cpu_reset >/dev/null 2>&1
+            echo "foreground boot probe status: $?"
+            if [ -s "$PROBELOG" ]; then
+                echo "--- foreground boot output ---"
+                head -20 "$PROBELOG" | tr -d '\000' |
+                    sed 's/\x1b\[[0-9;]*m//g'
+            fi
+            if [ -s "$PROBELOG.qemu" ]; then
+                echo "--- foreground QEMU log ---"
+                head -40 "$PROBELOG.qemu" | tr -d '\000'
+            fi
             if [ -s "$QEMULOG" ]; then
                 echo "--- QEMU internal log ---"
                 tail -60 "$QEMULOG" | tr -d '\000' | sed 's/\x1b\[[0-9;]*m//g'

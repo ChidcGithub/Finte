@@ -2022,6 +2022,10 @@ static int proc_signal_test(void)
  * signal delivery, churn and abort of a blocked process. */
 int finte_proc_abi_test(void)
 {
+    /* The suite deliberately provokes user faults and aborts blocked flows.
+     * Those are expected events, so keep the three-strike watchdog from
+     * turning them into a machine panic. */
+    hal_watchdog_suspend();
     int space_ok = 0;
     faddr_space_t *as = finte_as_create();
     if (as) {
@@ -2097,6 +2101,7 @@ int finte_proc_abi_test(void)
     if (n > 0) {
         hal_console_write(buf, (size_t)n);
     }
+    hal_watchdog_resume();
     return (space_ok && abi == 0 && fork_rc == 0 && exec_rc == 0 &&
             sig_rc == 0 && cap_rc == 0 && svc_rc == 0 && bad_rc == 0 &&
             dyn_rc == 0 && churn_rc == 0 && blocked_ok) ? 0 : FINTE_ERR_STATE;
