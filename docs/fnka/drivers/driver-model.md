@@ -155,8 +155,9 @@ different call and IPC mechanisms.
 - No user-space driver host.
 - No device manager or hotplug.
 - No driver restart or recovery framework.
-- The x86 UEFI path exits firmware services; storage uses AHCI and polled
-  NVMe, input uses PS/2/serial. USB storage and USB-HID need an xHCI driver.
+- The x86 UEFI path exits firmware services; storage uses AHCI, polled NVMe
+  and xHCI USB mass storage, input uses PS/2/serial or the xHCI boot keyboard.
+  USB3 SuperSpeed companion descriptors and hubs remain unsupported.
 - No native USB stack.
 
 ## 9. Open questions

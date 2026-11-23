@@ -6,6 +6,7 @@
 #include "finte/uefi.h"
 #include "blk.h"
 #include "hal_x86.h"
+#include "xhci.h"
 
 #define ATA_MAX 4
 #define AHCI_MAX_DEV 8
@@ -900,6 +901,7 @@ static void blk_init(void)
     ata_scan();
     ahci_scan();
     nvme_scan();
+    xhci_init();
     /* OVMF exposes the same SATA disks through Block I/O. Keep firmware
      * devices only when native ATA/AHCI did not already enumerate them;
      * this leaves NVMe/USB storage available without duplicate hd entries. */
@@ -922,12 +924,19 @@ static void blk_init(void)
                 dup = 1;
             }
         }
+        for (int u = 0; u < xhci_blk_count(); u++) {
+            fblk_info_t bi;
+            if (xhci_blk_info(u, &bi) == 0 && bi.sectors == sectors) {
+                dup = 1;
+            }
+        }
         if (!dup) {
             g_fw[out++] = g_fw[i];
         }
     }
     g_fw_count = out;
-    g_blk_total = g_ata_count + g_ahci_count + g_nvme_count + g_fw_count;
+    g_blk_total = g_ata_count + g_ahci_count + g_nvme_count +
+                  xhci_blk_count() + g_fw_count;
 }
 
 int hal_blk_count(void)
@@ -958,9 +967,13 @@ int hal_blk_info(int index, fblk_info_t *out)
         finte_strlcpy(out->name, d->name, sizeof(out->name));
         out->sectors = d->sectors;
         out->sector_size = d->sector_size;
+    } else if (index < g_ata_count + g_ahci_count + g_nvme_count +
+                         xhci_blk_count()) {
+        return xhci_blk_info(index - g_ata_count - g_ahci_count -
+                                 g_nvme_count, out);
     } else {
         fboot_blk_t *b = &g_fw[index - g_ata_count - g_ahci_count -
-                               g_nvme_count];
+                               g_nvme_count - xhci_blk_count()];
         finte_strlcpy(out->name, b->name, sizeof(out->name));
         out->sectors = b->last_block;
         out->sector_size = b->block_size;
@@ -1032,8 +1045,13 @@ int hal_blk_read(int index, uint64_t lba, void *buf, uint32_t sectors)
         hal_spin_unlock(&g_nvme_lock);
         return rc;
     }
+    if (index < g_ata_count + g_ahci_count + g_nvme_count +
+                    xhci_blk_count()) {
+        return xhci_blk_read(index - g_ata_count - g_ahci_count -
+                                 g_nvme_count, lba, buf, sectors);
+    }
     return fw_read(&g_fw[index - g_ata_count - g_ahci_count -
-                        g_nvme_count], lba, buf, sectors);
+                        g_nvme_count - xhci_blk_count()], lba, buf, sectors);
 }
 
 int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors)
@@ -1062,6 +1080,12 @@ int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors)
         hal_spin_unlock(&g_nvme_lock);
         return rc;
     }
+    if (index < g_ata_count + g_ahci_count + g_nvme_count +
+                    xhci_blk_count()) {
+        return xhci_blk_write(index - g_ata_count - g_ahci_count -
+                                  g_nvme_count, lba, buf, sectors);
+    }
     return fw_write(&g_fw[index - g_ata_count - g_ahci_count -
-                         g_nvme_count], lba, buf, sectors);
+                         g_nvme_count - xhci_blk_count()], lba, buf,
+                    sectors);
 }

@@ -28,7 +28,7 @@ payload lives before that partition; the UEFI files are inside it.
 - Boot sector: reads CHS geometry with INT 13h AH=08h, then loads 32 stage2
   sectors to `0x0000:0x8000`, one sector per call.
 - Stage2: reads the header at LBA 33, loads the kernel to `0x10000` and the
-  ramdisk to `0x40000`, copies the kernel to **64 MiB**, builds a 1 GiB identity
+  ramdisk to `0x60000`, copies the kernel to **64 MiB**, builds a 1 GiB identity
   map with 2 MiB pages, enters long mode, and jumps to `0x4000000`.
 - CHS is used instead of EDD LBA because EDD failed on the tested QEMU BIOS,
   while CHS worked. The kernel/ramdisk are in the first ~1 MiB, so CHS is safe

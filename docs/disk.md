@@ -331,8 +331,8 @@ partitions and deterministic file contents. A GPT image can be made with
   atomic at the superblock, but an interrupted sync leaves the previous tree.
 - Every sync appends a full tree; compact with `tools/lfc1ck.py --compact`.
 - NVMe is available through the UEFI polled single-queue driver (512-byte
-  logical namespaces); USB storage requires an xHCI driver. BIOS has ATA PIO
-  only.
+  logical namespaces). USB mass storage is available through the UEFI xHCI
+  bulk-only driver on USB2 ports. BIOS has ATA PIO only.
 - The arm64 virtio-mmio driver is polled, uses one queue and assumes QEMU's
   coherent DMA; there is no block IRQ or generic DMA framework yet.
 - The mount table is prefix-based; there is no VFS inode cache, page cache or

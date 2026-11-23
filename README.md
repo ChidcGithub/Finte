@@ -47,9 +47,9 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 - Native Windows host build uses Win32 fibers; Linux uses `ucontext`.
 
 **Physical-hardware status:** verified under QEMU BIOS/UEFI, VMware UEFI and a
-physical x86_64 machine (`hwtest`). The UEFI path has native AHCI and polled
-NVMe storage; USB-HID input still needs a native driver. Secure Boot must be
-off (the UEFI loader is unsigned).
+physical x86_64 machine (`hwtest`). The UEFI path has native AHCI, polled NVMe
+and xHCI USB HID/storage; Secure Boot must be off (the UEFI loader is
+unsigned).
 
 ## Quick start
 
@@ -88,6 +88,7 @@ make bench          # host microbenchmarks
 make arm64          # arm64 QEMU virt kernel (build/finte-arm64.elf)
 make abi-test       # x86_64 process ABI (fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn)
 make nvme-test      # x86_64 UEFI + polled NVMe + lfc1 mount/read/write
+make xhci-test      # x86_64 UEFI + USB HID keyboard + USB storage
 make arm64-test     # 4-CPU MMU/timer/SMP + EL0 user/procs/ABI + 147 core checks
 make arm64-uefi-test # same platform checks through AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
@@ -164,9 +165,9 @@ forces software emulation. WHPX runs with the **SDL** frontend because QEMU's
 GTK frontend can stall before the guest starts on some Windows/WHPX setups;
 TCG uses GTK. The launcher also switches the SDL window to the US keyboard
 layout so the Windows IME cannot swallow letter keys. Direct PS/2 is the
-default for low typing latency. `-UsbKeyboard` now warns and falls back to PS/2
-because the UEFI loader exits boot services; USB-HID input needs a native
-driver. The guest image and its multi-core behavior are unchanged.
+default for low typing latency. The UEFI kernel has a native xHCI boot-keyboard
+path; the launcher still defaults to PS/2 for compatibility. The guest image
+and its multi-core behavior are unchanged.
 QEMU diagnostics are written to `%LOCALAPPDATA%\FinteGUI\qemu.log` instead of
 cluttering the launcher with benign firmware/WHPX warnings.
 
@@ -459,12 +460,13 @@ The performance argument is structural: handles are direct indexes, capability c
 - Own BIOS boot sector/stage2 (CHS) and own x86_64/arm64 UEFI PE loaders.
 - Hybrid x86_64 raw USB image with MBR, FAT32 ESP, BIOS payload and UEFI payload.
 - x86_64 and arm64 ISO/IMG release media; arm64 boots through AAVMF.
-- VGA text console, GOP framebuffer console, PS/2 + serial input. Firmware
-  ConIn is unavailable after `ExitBootServices`; USB-HID needs a native driver.
+- VGA text console, GOP framebuffer console, PS/2, serial and xHCI boot HID
+  keyboard input. Firmware ConIn is unavailable after `ExitBootServices`.
 - CLI shell with ramdisk access, writable lfc1 filesystems, line editing,
   history, completion and diagnostic commands.
-- Disk manager over ATA PIO, AHCI and polled NVMe on x86_64, and virtio-mmio on
-  arm64 (legacy version 1 and modern version 2 transports, polled). Firmware
+- Disk manager over ATA PIO, AHCI, polled NVMe and polled xHCI USB mass storage
+  on x86_64, and virtio-mmio on arm64 (legacy version 1 and modern version 2
+  transports, polled). Firmware
   Block I/O remains only for a producer that keeps `fw_services`; current
   loaders exit boot services, with MBR/GPT
   parsing, an 8-entry read cache, an append-only lfc1 v2 writer, host-side
@@ -499,6 +501,8 @@ The performance argument is structural: handles are direct indexes, capability c
   user/procs tests, and arm64 virtio disk tests.
 - x86_64 polled NVMe: QEMU UEFI mounts lfc1 from an NVMe namespace, reads and
   writes a file (`make nvme-test`).
+- x86_64 xHCI: USB boot keyboard types a shell command and USB BOT storage
+  mounts/reads/writes lfc1 (`make xhci-test`).
 - VMware Workstation UEFI and physical x86_64 hardware: `hwtest` passes
   (147 core checks, four-process demo and `init.elf`).
 
@@ -523,13 +527,14 @@ The performance argument is structural: handles are direct indexes, capability c
 - **Writable NTFS/ext4 and journaling.** Only lfc1 is writable. lfc1 sync is
   copy-on-write and append-only, so old trees consume space until compacted on
   the host; there is no journal or automatic garbage collection.
-- **Native USB storage and HID.** x86 UEFI uses native AHCI and polled NVMe
-  for storage; USB storage and USB-HID input still need an xHCI driver. BIOS
-  has ATA PIO only, and the NVMe path currently requires UEFI page tables and
-  512-byte logical namespaces.
-- **USB-HID input on a kernel-native stack.** The UEFI loaders exit boot
-  services, so firmware ConIn is gone. Serial and PS/2 input work; USB-only
-  keyboards need a future HID driver.
+- **Native USB storage and HID.** x86 UEFI has a polled xHCI controller with a
+  boot HID keyboard and bulk-only USB mass storage (BOT/SCSI), tested on the
+  USB2 port set. USB hubs, SuperSpeed companion descriptors and non-boot HID
+  reports are not yet handled. BIOS has ATA PIO only, and the NVMe path
+  requires UEFI page tables and 512-byte logical namespaces.
+- **USB-HID input.** The UEFI loaders exit boot services, so firmware ConIn is
+  gone. PS/2 and serial work, and the UEFI xHCI path supports a boot HID
+  keyboard; USB3 hubs and non-boot HID report formats remain unsupported.
 - **UEFI ownership.** Both UEFI loaders call `ExitBootServices` and clear the
   firmware pointers. The GOP framebuffer remains valid memory; no firmware
   IDT or Boot Services calls are used after handoff.
@@ -547,8 +552,8 @@ The performance argument is structural: handles are direct indexes, capability c
   `mincore`, `MADV_PAGEOUT` and raw-block swap are in place; there is no
   guard-page or stack-growth enforcement yet.
 
-Roadmap order: xHCI USB-HID/storage → journaled lfc1 or writable NTFS/ext4 →
-per-core scheduler shards → arm64 ACPI/DTB + GICv3 → signed UEFI build.
+Roadmap order: journaled lfc1 or writable NTFS/ext4 → per-core scheduler
+shards → arm64 ACPI/DTB + GICv3 → signed UEFI build.
 
 ## Repository map
 

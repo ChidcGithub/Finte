@@ -1,5 +1,6 @@
 /* PS/2 scancode set 1 + COM1 serial input. Polled, no IRQs required. */
 #include "input.h"
+#include "xhci.h"
 #include "finte/uefi.h"
 #include "finte/hal.h"
 #include "hal_x86.h"
@@ -265,6 +266,7 @@ void input_init(void)
     serial_num = 0;
     serial_mod = 0;
     mouse_init();
+    xhci_init();
 }
 
 void input_boot(const fboot_info_t *bi)
@@ -473,6 +475,10 @@ int input_trywheel(void)
 int input_trykey(void)
 {
     int c = serial_trykey();
+    if (c >= 0) {
+        return c;
+    }
+    c = xhci_trykey();
     if (c >= 0) {
         return c;
     }

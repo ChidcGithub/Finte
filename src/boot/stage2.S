@@ -1,7 +1,7 @@
 /* Finte stage 2: CHS disk loader + protected/long mode transition.
  *
  * Loaded at 0x8000 by the MBR. Reads the image header at LBA 33, loads the
- * flat kernel to 0x10000 and the ramdisk to 0x40000 via BIOS CHS reads, copies
+ * flat kernel to 0x10000 and the ramdisk to 0x60000 via BIOS CHS reads, copies
  * the kernel to 2 MiB, identity maps 1 GiB, and enters long mode.
  */
 .code16
@@ -27,7 +27,7 @@
 .equ BOOT_FLAG_MEMMAP, 1
 .equ BOOT_FLAG_MODULES, 16
 .equ KERNEL_LOAD, 0x10000
-.equ RAMDISK_LOAD, 0x40000
+.equ RAMDISK_LOAD, 0x60000
 .equ KERNEL_DEST, 0x4000000
 
 .section .text
@@ -91,7 +91,7 @@ _start:
     mov eax, [HEADER_ADDR + 0x18]       /* kernel_size */
     test eax, eax
     jz header_error
-    cmp eax, 0x30000
+    cmp eax, 0x40000
     ja header_error
     mov eax, [HEADER_ADDR + 0x1C]       /* ramdisk_size */
     cmp eax, 0x40000
@@ -107,7 +107,7 @@ _start:
     mov al, 'K'
     call serial_putc
 
-    /* Ramdisk to 0x40000, if present. */
+    /* Ramdisk to 0x60000, if present. */
     mov ax, [HEADER_ADDR + 0x14]
     test ax, ax
     jz no_ramdisk
@@ -115,7 +115,7 @@ _start:
     mov [load_lba], eax
     mov ax, [HEADER_ADDR + 0x14]
     mov [load_remaining], ax
-    mov word ptr [load_seg], 0x4000
+    mov word ptr [load_seg], (RAMDISK_LOAD >> 4)
     call load_region
 
 no_ramdisk:
@@ -391,16 +391,17 @@ pm_entry:
     rep movsb
     serput 'C'
 
-    /* Clear PML4, PDPT and PD at 0x70000..0x72FFF. */
-    mov edi, 0x70000
+    /* Clear PML4, PDPT and PD at 0x90000..0x92FFF. The ramdisk occupies
+     * 0x60000..0x85xxx, so keep the tables above it and below the EBDA. */
+    mov edi, 0x90000
     xor eax, eax
     mov ecx, 3072
     rep stosd
 
-    mov dword ptr [0x70000], 0x71003
-    mov dword ptr [0x71000], 0x72003
+    mov dword ptr [0x90000], 0x91003
+    mov dword ptr [0x91000], 0x92003
     xor ecx, ecx
-    mov ebx, 0x72000
+    mov ebx, 0x92000
 1:
     mov eax, ecx
     shl eax, 21
@@ -414,7 +415,7 @@ pm_entry:
     mov eax, cr4
     or eax, 0x20
     mov cr4, eax
-    mov eax, 0x70000
+    mov eax, 0x90000
     mov cr3, eax
 
     mov ecx, 0xC0000080

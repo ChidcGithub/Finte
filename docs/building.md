@@ -62,6 +62,7 @@ make qemu-test      # BIOS CLI boot test
 make qemu-uefi-test # UEFI CLI boot test
 make abi-test       # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn suite
 make nvme-test      # x86_64 UEFI polled NVMe read/write + lfc1 mount
+make xhci-test      # x86_64 UEFI xHCI USB keyboard + USB storage
 make arm64-test     # arm64 4-CPU MMU/GIC/timer/SMP + EL0 user/procs/ABI
 make arm64-uefi-test # same arm64 checks under AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
@@ -193,8 +194,8 @@ The launcher rebuilds `build/finte.img`, stages it and OVMF under
 `%LOCALAPPDATA%\FinteGUI` because QEMU for Windows cannot reliably open the
 project path (it contains spaces and Chinese characters), and opens a QEMU
 window. Click once inside the window to capture keyboard focus; the shell
-accepts PS/2 and serial input. Firmware ConIn is disabled by the current UEFI
-loader, so USB-only keyboards need a native HID driver. `PageUp`/`PageDown`,
+accepts PS/2, serial and (on UEFI) xHCI boot-keyboard input. Firmware ConIn is
+disabled by the current UEFI loader. `PageUp`/`PageDown`,
 `Shift+Up/Down`, `Home`/`End` and the mouse wheel scroll the last 512 console
 lines; typing returns to the prompt. `shutdown` exits QEMU.
 WHPX is used automatically when available; install/enable **Windows Hypervisor

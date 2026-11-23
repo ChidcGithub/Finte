@@ -96,6 +96,12 @@ Short notes only. GitHub releases carry the per-commit changes.
   and I/O queues, Identify Controller/Namespace, 4 KiB PRP transfers and HAL
   block registration. QEMU UEFI mounts lfc1 from an NVMe namespace and verifies
   file read and write (`make nvme-test`); CI installs OVMF and runs it.
+- Added a polled xHCI controller, boot HID keyboard and bulk-only USB mass
+  storage. USB storage registers through `hal_blk_*`; `usb-kbd` input is polled
+  by the shell. The QEMU test types `uname` through the emulated keyboard and
+  mounts/reads/writes lfc1 over `usb-storage` (`make xhci-test`, CI). Current
+  scope is the USB2 port set, boot keyboard reports and BOT/SCSI; hubs and
+  SuperSpeed companion descriptors are not handled.
 - NVMe details: UEFI only, namespace 1, 512-byte logical blocks, one polled I/O
   queue and 4 KiB PRP transfers. The QEMU test and CI run mount, read, write and
   sync lfc1 over the NVMe namespace.

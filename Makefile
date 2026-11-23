@@ -49,7 +49,7 @@ USER_PROGS := init ipc abi fork exec signal kill cap bad svc svc_client dyn wait
 USER_ELF := $(addprefix $(BUILD)/,$(addsuffix .elf,$(USER_PROGS)))
 ARM64_USER_ELF := $(addprefix $(BUILD)/arm64/,$(addsuffix .elf,$(USER_PROGS)))
 
-HEADERS := $(wildcard src/include/finte/*.h)
+HEADERS := $(wildcard src/include/finte/*.h) $(wildcard src/arch/x86_64/*.h)
 CORE_SRC := src/core/util.c src/core/object.c src/core/cap.c src/core/arena.c src/core/channel.c \
             src/core/flow.c src/core/sched.c src/core/verb.c src/core/compat_linux.c \
             src/core/demo.c src/core/guest_linux.c src/core/selftest.c src/core/initrd.c \
@@ -63,7 +63,7 @@ KERNEL_SRC := $(CORE_SRC) src/arch/x86_64/kmain.c src/arch/x86_64/hal_x86.c \
               src/arch/x86_64/faults.c src/arch/x86_64/post.c src/arch/x86_64/libc.c \
               src/arch/x86_64/vga.c src/arch/x86_64/fb.c \
               src/arch/x86_64/input.c src/arch/x86_64/scroll.c \
-              src/arch/x86_64/blk.c src/arch/x86_64/timer.c src/arch/x86_64/usermode.c \
+              src/arch/x86_64/blk.c src/arch/x86_64/xhci.c src/arch/x86_64/timer.c src/arch/x86_64/usermode.c \
               src/arch/x86_64/process.c src/arch/x86_64/smp.c src/arch/x86_64/shell.c \
               $(BUILD)/ap_trampoline_bin.c
 KERNEL_ASM := src/arch/x86_64/context.S src/arch/x86_64/faults.S src/arch/x86_64/entry64.S \
@@ -84,7 +84,7 @@ ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
         disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
         arm64 arm64-test arm64-uefi-test arm64-disk-test arm64-uefi-disk-test \
-        abi-test qemu-arm64 images iso vmware nvme-test
+        abi-test qemu-arm64 images iso vmware nvme-test xhci-test
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
@@ -164,6 +164,9 @@ abi-test: $(BUILD)/finte-bios.img $(BUILD)/disk-test.img $(BUILD)/swap.img
 
 nvme-test: $(BUILD)/finte-x86_64.iso $(BUILD)/disk-test.img
 	bash tools/qemu_nvme_test.sh
+
+xhci-test: $(BUILD)/finte-x86_64.iso $(BUILD)/disk-test.img
+	bash tools/qemu_xhci_test.sh
 
 arm64-disk-test: arm64 $(BUILD)/disk-test.img $(BUILD)/swap.img
 	QEMU_ARM64=$(QEMU_ARM64) \

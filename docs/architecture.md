@@ -372,7 +372,7 @@ Finte does not use GRUB. One hybrid raw image contains two independent boot path
    - CHS is used instead of EDD LBA for maximum BIOS USB compatibility
 2. **Stage2** (`src/boot/stage2.S`)
    - reads the image header at LBA 33
-   - loads the kernel to `0x10000` and the ramdisk to `0x40000`
+   - loads the kernel to `0x10000` and the ramdisk to `0x60000`
    - copies the kernel to **64 MiB**
    - probes E820 into a boot memory map
    - builds PML4 → PDPT → PD, identity mapping 1 GiB with **8-byte** 2 MiB entries

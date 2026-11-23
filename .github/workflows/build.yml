@@ -38,6 +38,8 @@ jobs:
         run: make abi-test
       - name: Run polled NVMe test
         run: make nvme-test
+      - name: Run xHCI HID/storage test
+        run: make xhci-test
       - name: Run arm64 boot test
         run: make arm64-test
       - name: Run arm64 UEFI test
