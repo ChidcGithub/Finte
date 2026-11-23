@@ -15,7 +15,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld gcc-aarch64-linux-gnu \
-            qemu-system-x86 qemu-system-arm qemu-efi-aarch64 \
+            qemu-system-x86 qemu-system-arm qemu-efi-aarch64 ovmf \
             e2fsprogs ntfs-3g
       - name: Build images
         run: make images
@@ -36,6 +36,8 @@ jobs:
           ./build/finte selfcheck
       - name: Run x86 process ABI test
         run: make abi-test
+      - name: Run polled NVMe test
+        run: make nvme-test
       - name: Run arm64 boot test
         run: make arm64-test
       - name: Run arm64 UEFI test

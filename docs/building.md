@@ -61,6 +61,7 @@ make qemu-uefi      # OVMF UEFI boot, serial console
 make qemu-test      # BIOS CLI boot test
 make qemu-uefi-test # UEFI CLI boot test
 make abi-test       # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn suite
+make nvme-test      # x86_64 UEFI polled NVMe read/write + lfc1 mount
 make arm64-test     # arm64 4-CPU MMU/GIC/timer/SMP + EL0 user/procs/ABI
 make arm64-uefi-test # same arm64 checks under AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
@@ -252,10 +253,10 @@ The QEMU targets attach `build/disk-test.img` as the second IDE/SATA disk and
 mount `hd1p1` (lfc1), `hd1p2` (ext4) and `hd1p3` (NTFS) in turn. The lfc1
 partition is writable; `write`, `mkdir`, `cp` and `sync` are exercised there.
 
-Writable lfc1 is covered by the AHCI test (`make qemu-uefi-disk-test`). The
-current x86 UEFI loader exits boot services and has no native NVMe driver, so
-firmware Block I/O no longer exposes NVMe/USB disks. Those paths return when
-native drivers land.
+Writable lfc1 is covered by AHCI and NVMe tests. The x86 UEFI loader exits boot
+services, so firmware Block I/O is unavailable after handoff; storage uses the
+native AHCI and polled NVMe drivers. Use `make nvme-test` for the dedicated
+NVMe mount/read/write check.
 
 ## Startup checks
 

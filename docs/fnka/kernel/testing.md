@@ -44,6 +44,7 @@ make qemu-uefi-test       # UEFI/OVMF boot and CLI checks
 make qemu-disk-test       # BIOS + ATA PIO + lfc1/ext4/NTFS
 make qemu-uefi-disk-test  # UEFI + AHCI + filesystems
 make abi-test             # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn
+make nvme-test            # x86_64 UEFI + polled NVMe + lfc1 mount/read/write
 make arm64-test           # arm64 4 CPUs: MMU/timer/SMP + EL0 user/procs/ABI + core checks
 make arm64-uefi-test      # same arm64 platform checks under AAVMF
 make arm64-disk-test      # arm64 virtio-mmio legacy + modern lfc1/ext4/NTFS
@@ -83,7 +84,7 @@ matrix.
 | Arena mapping | Passing | Passing | Page-scoped arena caps on both user demos |
 | User-mode transition | Passing | Passing | x86 ring 3 `int 0x80`; arm64 EL0 `svc #0` |
 | Process ABI | Passing (1 CPU) | Passing (4 CPUs) | dynamic fd table with dup/dup2/fcntl and shared open-file descriptions, demand-paged mmap, file-backed mmap, mincore, MADV_PAGEOUT, raw-block swap, COW fork, waitpid, exec, signal masks/SIGUSR1/2/SIGCHLD/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, SIGALRM/SIGVTALRM/SIGPROF timers, cap transfer, service registry, ET_DYN load, churn, blocked abort |
-| Block storage | Passing | Passing | x86 ATA/AHCI; arm64 virtio-mmio legacy + modern |
+| Block storage | Passing | Passing | x86 ATA/AHCI + polled NVMe (UEFI); arm64 virtio-mmio legacy + modern |
 | ISO/IMG boot | Passing | Passing | Local checks and CI arm64 targets |
 | Hardware validation | Passing (bare metal + VMware UEFI) | Pending | x86_64 `hwtest`; arm64 needs ACPI/DTB/GICv3 |
 

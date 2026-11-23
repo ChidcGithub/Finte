@@ -84,7 +84,7 @@ ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
         disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
         arm64 arm64-test arm64-uefi-test arm64-disk-test arm64-uefi-disk-test \
-        abi-test qemu-arm64 images iso vmware
+        abi-test qemu-arm64 images iso vmware nvme-test
 
 $(VERSION_HEADER): FORCE
 	@mkdir -p $(BUILD)
@@ -161,6 +161,9 @@ arm64-uefi-test: $(BUILD)/finte-arm64.iso $(BUILD)/disk-test.img $(BUILD)/swap.i
 
 abi-test: $(BUILD)/finte-bios.img $(BUILD)/disk-test.img $(BUILD)/swap.img
 	bash tools/qemu_abi_test.sh
+
+nvme-test: $(BUILD)/finte-x86_64.iso $(BUILD)/disk-test.img
+	bash tools/qemu_nvme_test.sh
 
 arm64-disk-test: arm64 $(BUILD)/disk-test.img $(BUILD)/swap.img
 	QEMU_ARM64=$(QEMU_ARM64) \

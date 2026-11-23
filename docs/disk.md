@@ -310,9 +310,9 @@ make arm64-uefi-disk-test  # arm64 UEFI ISO + virtio-mmio test disk
 ```
 
 Writable lfc1 is exercised by the shell tests: create, write, mkdir, cp, sync,
-umount, remount and read back. The current UEFI loader exits boot services, so
-the firmware Block I/O NVMe path is inactive; use the AHCI test disk. A future
-native NVMe driver will restore that path.
+umount, remount and read back. Native AHCI and polled NVMe expose storage after
+the UEFI loader exits boot services; `make nvme-test` mounts lfc1 from a QEMU
+NVMe namespace.
 
 The Windows GUI launcher can attach the same test disk:
 
@@ -330,8 +330,9 @@ partitions and deterministic file contents. A GPT image can be made with
 - lfc1 has no journal, permissions, timestamps, hard links or symlinks. Sync is
   atomic at the superblock, but an interrupted sync leaves the previous tree.
 - Every sync appends a full tree; compact with `tools/lfc1ck.py --compact`.
-- NVMe and USB storage require native drivers; the current UEFI loaders exit
-  boot services, so firmware Block I/O is unavailable. BIOS has ATA PIO only.
+- NVMe is available through the UEFI polled single-queue driver (512-byte
+  logical namespaces); USB storage requires an xHCI driver. BIOS has ATA PIO
+  only.
 - The arm64 virtio-mmio driver is polled, uses one queue and assumes QEMU's
   coherent DMA; there is no block IRQ or generic DMA framework yet.
 - The mount table is prefix-based; there is no VFS inode cache, page cache or

@@ -529,6 +529,343 @@ static void ahci_scan(void)
     }
 }
 
+/* ---- NVMe (polled) ----------------------------------------------------- */
+
+#define NVME_MAX 4
+#define NVME_QD 64
+
+typedef struct nvme_queue {
+    uint8_t *sq;
+    uint8_t *cq;
+    uint32_t qid;
+    uint32_t sq_tail;
+    uint32_t cq_head;
+    uint16_t phase;
+    uint16_t cid;
+} nvme_queue_t;
+
+typedef struct nvme_dev {
+    int used;
+    volatile uint32_t *mmio;
+    uint32_t dstrd;
+    uint64_t sectors;
+    uint32_t sector_size;
+    nvme_queue_t admin;
+    nvme_queue_t io;
+    uint8_t *idbuf;
+    uint8_t *bounce;
+    char name[FBLK_NAME_MAX];
+} nvme_dev_t;
+
+static nvme_dev_t g_nvme[NVME_MAX];
+static int g_nvme_count;
+static volatile int g_nvme_lock;
+
+static uint32_t nvme_rd32(nvme_dev_t *d, uint32_t off)
+{
+    return d->mmio[off / 4u];
+}
+
+static void nvme_wr32(nvme_dev_t *d, uint32_t off, uint32_t v)
+{
+    d->mmio[off / 4u] = v;
+}
+
+static uint64_t nvme_rd64(nvme_dev_t *d, uint32_t off)
+{
+    uint64_t lo = nvme_rd32(d, off);
+    uint64_t hi = nvme_rd32(d, off + 4u);
+    return lo | (hi << 32);
+}
+
+static void nvme_wr64(nvme_dev_t *d, uint32_t off, uint64_t v)
+{
+    nvme_wr32(d, off, (uint32_t)v);
+    nvme_wr32(d, off + 4u, (uint32_t)(v >> 32));
+}
+
+static void nvme_barrier(void)
+{
+    __asm__ volatile("mfence" : : : "memory");
+}
+
+static uint64_t nvme_deadline(uint32_t seconds)
+{
+    uint64_t freq = hal_cycles_per_sec();
+    if (freq == 0) {
+        freq = 1000000000ull;
+    }
+    return hal_cycles() + freq * seconds;
+}
+
+static int nvme_wait_ready(nvme_dev_t *d, int ready)
+{
+    uint64_t end = nvme_deadline(3);
+    while (hal_cycles() < end) {
+        uint32_t csts = nvme_rd32(d, 0x1C);
+        if (((csts & 1u) != 0) == ready) {
+            return 0;
+        }
+        __asm__ volatile("pause");
+    }
+    return -1;
+}
+
+static void nvme_sq_doorbell(nvme_dev_t *d, nvme_queue_t *q)
+{
+    volatile uint32_t *db = (volatile uint32_t *)(void *)
+        ((uint8_t *)d->mmio + 0x1000u +
+         (uint64_t)q->qid * (8u << d->dstrd));
+    *db = q->sq_tail;
+    nvme_barrier();
+}
+
+static void nvme_cq_doorbell(nvme_dev_t *d, nvme_queue_t *q)
+{
+    volatile uint32_t *db = (volatile uint32_t *)(void *)
+        ((uint8_t *)d->mmio + 0x1000u + 4u +
+         (uint64_t)q->qid * (8u << d->dstrd));
+    *db = q->cq_head;
+    nvme_barrier();
+}
+
+static int nvme_queue_alloc(nvme_dev_t *d, nvme_queue_t *q, uint32_t qid)
+{
+    (void)d;
+    finte_memset(q, 0, sizeof(*q));
+    q->sq = (uint8_t *)hal_pages_alloc(4096);
+    q->cq = (uint8_t *)hal_pages_alloc(4096);
+    if (!q->sq || !q->cq) {
+        return -1;
+    }
+    q->qid = qid;
+    q->phase = 1;
+    return 0;
+}
+
+static int nvme_submit(nvme_dev_t *d, nvme_queue_t *q, uint32_t cdw0,
+                       uint32_t nsid, uint32_t cdw10, uint32_t cdw11,
+                       uint32_t cdw12, uint64_t prp1)
+{
+    uint16_t cid = q->cid++;
+    uint32_t *sq = (uint32_t *)(void *)(q->sq + (size_t)q->sq_tail * 64u);
+    finte_memset(sq, 0, 64);
+    sq[0] = cdw0 | ((uint32_t)cid << 16);
+    sq[1] = nsid;
+    ((uint64_t *)(void *)(sq + 6))[0] = prp1;
+    sq[10] = cdw10;
+    sq[11] = cdw11;
+    sq[12] = cdw12;
+    nvme_barrier();
+    q->sq_tail = (q->sq_tail + 1u) % NVME_QD;
+    nvme_sq_doorbell(d, q);
+
+    uint64_t end = nvme_deadline(3);
+    while (hal_cycles() < end) {
+        uint8_t *cqe = q->cq + (size_t)q->cq_head * 16u;
+        uint16_t status = rd16(cqe + 14);
+        if ((status & 1u) != q->phase) {
+            __asm__ volatile("pause");
+            continue;
+        }
+        uint16_t got_cid = rd16(cqe + 12);
+        uint16_t sc = (uint16_t)((status >> 1) & 0x7FFu);
+        q->cq_head = (q->cq_head + 1u) % NVME_QD;
+        if (q->cq_head == 0) {
+            q->phase ^= 1u;
+        }
+        nvme_cq_doorbell(d, q);
+        return (got_cid == cid && sc == 0) ? 0 : -1;
+    }
+    return -1;
+}
+
+static int nvme_admin(nvme_dev_t *d, uint32_t opcode, uint32_t nsid,
+                      uint32_t cdw10, uint32_t cdw11, uint32_t cdw12,
+                      void *data, uint32_t len)
+{
+    uint64_t prp = 0;
+    if (data && len) {
+        if (len > 4096u) {
+            return -1;
+        }
+        prp = (uint64_t)(uintptr_t)data;
+    }
+    return nvme_submit(d, &d->admin, opcode, nsid, cdw10, cdw11, cdw12,
+                       prp);
+}
+
+static int nvme_controller_start(nvme_dev_t *d, volatile uint32_t *mmio,
+                                 const char *name)
+{
+    finte_memset(d, 0, sizeof(*d));
+    d->mmio = mmio;
+    uint64_t cap = nvme_rd64(d, 0x00);
+    d->dstrd = (uint32_t)((cap >> 32) & 0xFu);
+    /* CAP.CSS bit 37 advertises the NVM command set. */
+    if ((cap & (1ull << 37)) == 0) {
+        return -1;
+    }
+    uint32_t cc = nvme_rd32(d, 0x14);
+    if ((cc & 1u) != 0) {
+        nvme_wr32(d, 0x14, 0);
+        if (nvme_wait_ready(d, 0) != 0) {
+            return -1;
+        }
+    }
+    if (nvme_queue_alloc(d, &d->admin, 0) != 0 ||
+        nvme_queue_alloc(d, &d->io, 1) != 0) {
+        return -1;
+    }
+    d->idbuf = (uint8_t *)hal_pages_alloc(4096);
+    d->bounce = (uint8_t *)hal_pages_alloc(4096);
+    if (!d->idbuf || !d->bounce) {
+        return -1;
+    }
+    nvme_wr32(d, 0x24, ((NVME_QD - 1u) << 16) | (NVME_QD - 1u));
+    nvme_wr64(d, 0x28, (uint64_t)(uintptr_t)d->admin.sq);
+    nvme_wr64(d, 0x30, (uint64_t)(uintptr_t)d->admin.cq);
+    nvme_wr32(d, 0x14, (6u << 16) | (4u << 20) | 1u);
+    if (nvme_wait_ready(d, 1) != 0) {
+        return -1;
+    }
+
+    finte_memset(d->idbuf, 0, 4096);
+    if (nvme_admin(d, 0x06, 0, 1, 0, 0, d->idbuf, 4096) != 0) {
+        return -1;
+    }
+    finte_memset(d->idbuf, 0, 4096);
+    if (nvme_admin(d, 0x06, 1, 0, 0, 0, d->idbuf, 4096) != 0) {
+        return -1;
+    }
+    uint64_t nsze = (uint64_t)d->idbuf[0] |
+                    ((uint64_t)d->idbuf[1] << 8) |
+                    ((uint64_t)d->idbuf[2] << 16) |
+                    ((uint64_t)d->idbuf[3] << 24) |
+                    ((uint64_t)d->idbuf[4] << 32) |
+                    ((uint64_t)d->idbuf[5] << 40) |
+                    ((uint64_t)d->idbuf[6] << 48) |
+                    ((uint64_t)d->idbuf[7] << 56);
+    if (nsze == 0) {
+        return -1;
+    }
+    uint8_t flbas = (uint8_t)(d->idbuf[26] & 0x0Fu);
+    uint32_t lbaf = (uint32_t)d->idbuf[128 + flbas * 4u] |
+                    ((uint32_t)d->idbuf[129 + flbas * 4u] << 8) |
+                    ((uint32_t)d->idbuf[130 + flbas * 4u] << 16) |
+                    ((uint32_t)d->idbuf[131 + flbas * 4u] << 24);
+    uint32_t lbads = (lbaf >> 16) & 0xFFu;
+    uint32_t ssize = (lbads >= 9u && lbads <= 12u) ? (1u << lbads) : 512u;
+    if (ssize != 512u) {
+        return -1; /* the block layer expects 512-byte sectors */
+    }
+
+    /* One I/O submission and completion queue. */
+    if (nvme_admin(d, 0x09, 0, 0x07, (1u << 16) | 1u, 0, NULL, 0) != 0) {
+        return -1;
+    }
+    if (nvme_admin(d, 0x05, 0, 1u | ((NVME_QD - 1u) << 16), 1u, 0,
+                   d->io.cq, 4096) != 0) {
+        return -1;
+    }
+    if (nvme_admin(d, 0x01, 0, 1u | ((NVME_QD - 1u) << 16),
+                   1u | (1u << 16), 0, d->io.sq, 4096) != 0) {
+        return -1;
+    }
+
+    d->sectors = nsze;
+    d->sector_size = ssize;
+    finte_strlcpy(d->name, name, sizeof(d->name));
+    d->used = 1;
+    return 0;
+}
+
+static int nvme_io(nvme_dev_t *d, uint64_t lba, void *buf, uint32_t sectors,
+                   int write)
+{
+    uint32_t done = 0;
+    while (done < sectors) {
+        uint32_t chunk = sectors - done;
+        if (chunk > 8u) {
+            chunk = 8u;
+        }
+        if (write) {
+            finte_memcpy(d->bounce, (const uint8_t *)buf + (size_t)done * 512u,
+                         (size_t)chunk * 512u);
+            nvme_barrier();
+        }
+        uint64_t l = lba + done;
+        int rc = nvme_submit(d, &d->io, write ? 0x01u : 0x02u, 1u,
+                             (uint32_t)l, (uint32_t)(l >> 32), chunk - 1u,
+                             (uint64_t)(uintptr_t)d->bounce);
+        if (rc != 0) {
+            return -1;
+        }
+        if (!write) {
+            finte_memcpy((uint8_t *)buf + (size_t)done * 512u, d->bounce,
+                         (size_t)chunk * 512u);
+        }
+        done += chunk;
+    }
+    return 0;
+}
+
+static void nvme_scan(void)
+{
+    if (!hal_is_uefi()) {
+        /* BIOS page tables only map the first GiB; NVMe BARs sit above it. */
+        return;
+    }
+    for (int bus = 0; bus < 256; bus++) {
+        for (int dev = 0; dev < 32; dev++) {
+            for (int fn = 0; fn < 8; fn++) {
+                uint32_t id = pci_read32((uint8_t)bus, (uint8_t)dev,
+                                         (uint8_t)fn, 0x00);
+                if ((id & 0xFFFFu) == 0xFFFFu) {
+                    continue;
+                }
+                uint32_t cls = pci_read32((uint8_t)bus, (uint8_t)dev,
+                                          (uint8_t)fn, 0x08);
+                if (((cls >> 24) & 0xFFu) != 0x01u ||
+                    ((cls >> 16) & 0xFFu) != 0x08u ||
+                    ((cls >> 8) & 0xFFu) != 0x02u) {
+                    continue;
+                }
+                if (g_nvme_count >= NVME_MAX) {
+                    return;
+                }
+                uint32_t raw = pci_read32((uint8_t)bus, (uint8_t)dev,
+                                          (uint8_t)fn, 0x10);
+                if (raw & 1u) {
+                    continue;
+                }
+                uint32_t bar_type = (raw >> 1) & 3u;
+                uint64_t bar = (uint64_t)(raw & ~0xFu);
+                if (bar_type == 2u) {
+                    bar |= (uint64_t)pci_read32((uint8_t)bus, (uint8_t)dev,
+                                                (uint8_t)fn, 0x14) << 32;
+                }
+                if (bar == 0) {
+                    continue;
+                }
+                uint16_t cmd = (uint16_t)pci_read32((uint8_t)bus,
+                                                    (uint8_t)dev,
+                                                    (uint8_t)fn, 0x04);
+                pci_write16((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 0x04,
+                            (uint16_t)(cmd | 0x6u));
+                char name[FBLK_NAME_MAX];
+                finte_format(name, sizeof(name), "nvme%d", g_nvme_count);
+                if (nvme_controller_start(
+                        &g_nvme[g_nvme_count],
+                        (volatile uint32_t *)(uintptr_t)bar, name) == 0) {
+                    g_nvme_count++;
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /* ---- public HAL block interface --------------------------------------- */
 
 static int g_blk_init;
@@ -562,6 +899,7 @@ static void blk_init(void)
     g_blk_init = 1;
     ata_scan();
     ahci_scan();
+    nvme_scan();
     /* OVMF exposes the same SATA disks through Block I/O. Keep firmware
      * devices only when native ATA/AHCI did not already enumerate them;
      * this leaves NVMe/USB storage available without duplicate hd entries. */
@@ -579,12 +917,17 @@ static void blk_init(void)
                 dup = 1;
             }
         }
+        for (int v = 0; v < g_nvme_count; v++) {
+            if (g_nvme[v].sectors == sectors) {
+                dup = 1;
+            }
+        }
         if (!dup) {
             g_fw[out++] = g_fw[i];
         }
     }
     g_fw_count = out;
-    g_blk_total = g_ata_count + g_ahci_count + g_fw_count;
+    g_blk_total = g_ata_count + g_ahci_count + g_nvme_count + g_fw_count;
 }
 
 int hal_blk_count(void)
@@ -610,8 +953,14 @@ int hal_blk_info(int index, fblk_info_t *out)
         finte_strlcpy(out->name, d->name, sizeof(out->name));
         out->sectors = d->sectors;
         out->sector_size = d->sector_size;
+    } else if (index < g_ata_count + g_ahci_count + g_nvme_count) {
+        nvme_dev_t *d = &g_nvme[index - g_ata_count - g_ahci_count];
+        finte_strlcpy(out->name, d->name, sizeof(out->name));
+        out->sectors = d->sectors;
+        out->sector_size = d->sector_size;
     } else {
-        fboot_blk_t *b = &g_fw[index - g_ata_count - g_ahci_count];
+        fboot_blk_t *b = &g_fw[index - g_ata_count - g_ahci_count -
+                               g_nvme_count];
         finte_strlcpy(out->name, b->name, sizeof(out->name));
         out->sectors = b->last_block;
         out->sector_size = b->block_size;
@@ -673,8 +1022,18 @@ int hal_blk_read(int index, uint64_t lba, void *buf, uint32_t sectors)
         }
         return ahci_cmd(d, 0x25, lba, (uint16_t)sectors, buf, 0);
     }
-    return fw_read(&g_fw[index - g_ata_count - g_ahci_count], lba, buf,
-                   sectors);
+    if (index < g_ata_count + g_ahci_count + g_nvme_count) {
+        nvme_dev_t *d = &g_nvme[index - g_ata_count - g_ahci_count];
+        if (!d->used || sectors == 0) {
+            return -1;
+        }
+        hal_spin_lock(&g_nvme_lock);
+        int rc = nvme_io(d, lba, buf, sectors, 0);
+        hal_spin_unlock(&g_nvme_lock);
+        return rc;
+    }
+    return fw_read(&g_fw[index - g_ata_count - g_ahci_count -
+                        g_nvme_count], lba, buf, sectors);
 }
 
 int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors)
@@ -693,6 +1052,16 @@ int hal_blk_write(int index, uint64_t lba, const void *buf, uint32_t sectors)
         }
         return ahci_cmd(d, 0x35, lba, (uint16_t)sectors, (void *)buf, 1);
     }
-    return fw_write(&g_fw[index - g_ata_count - g_ahci_count], lba, buf,
-                    sectors);
+    if (index < g_ata_count + g_ahci_count + g_nvme_count) {
+        nvme_dev_t *d = &g_nvme[index - g_ata_count - g_ahci_count];
+        if (!d->used || sectors == 0) {
+            return -1;
+        }
+        hal_spin_lock(&g_nvme_lock);
+        int rc = nvme_io(d, lba, (void *)buf, sectors, 1);
+        hal_spin_unlock(&g_nvme_lock);
+        return rc;
+    }
+    return fw_write(&g_fw[index - g_ata_count - g_ahci_count -
+                         g_nvme_count], lba, buf, sectors);
 }

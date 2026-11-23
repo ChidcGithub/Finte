@@ -92,11 +92,10 @@ Short notes only. GitHub releases carry the per-commit changes.
 - Physical x86_64 `hwtest` passed on real hardware, completing the x86_64
   hardware-validation row. Arm64 physical boot still needs DTB/ACPI platform
   discovery.
-- Refreshed the roadmap/status docs: the dynamic fd table, CPU-time timers,
-  demand paging/swap, VMware UEFI and physical x86_64 validation are complete.
-  Remaining roadmap items are native NVMe/USB, journaled lfc1 or writable
-  NTFS/ext4, per-core scheduler shards, arm64 ACPI/DTB+GICv3 and a signed UEFI
-  build.
+- Added a polled x86_64 NVMe driver: PCI class `01:08:02` discovery, admin
+  and I/O queues, Identify Controller/Namespace, 4 KiB PRP transfers and HAL
+  block registration. QEMU UEFI mounts lfc1 from an NVMe namespace and verifies
+  file read and write (`make nvme-test`); CI installs OVMF and runs it.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

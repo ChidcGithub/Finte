@@ -46,11 +46,10 @@ Finte is a from-scratch x86_64/arm64 system core and a small CLI OS. It has its 
 - Runs the **Linux x86_64 persona** in both environments.
 - Native Windows host build uses Win32 fibers; Linux uses `ucontext`.
 
-**Physical-hardware status:** verified under QEMU's BIOS and UEFI firmware,
-including a 4-CPU SMP boot, USB mass-storage boot media, AHCI after
-`ExitBootServices`, a windowed GTK GUI, and PS/2/serial shell input. NVMe and
-USB-HID input need native drivers. It has not yet been validated on a specific
-physical laptop. Secure Boot must be off (the UEFI loader is unsigned).
+**Physical-hardware status:** verified under QEMU BIOS/UEFI, VMware UEFI and a
+physical x86_64 machine (`hwtest`). The UEFI path has native AHCI and polled
+NVMe storage; USB-HID input still needs a native driver. Secure Boot must be
+off (the UEFI loader is unsigned).
 
 ## Quick start
 
@@ -88,6 +87,7 @@ make compat         # host-side Linux persona
 make bench          # host microbenchmarks
 make arm64          # arm64 QEMU virt kernel (build/finte-arm64.elf)
 make abi-test       # x86_64 process ABI (fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn)
+make nvme-test      # x86_64 UEFI + polled NVMe + lfc1 mount/read/write
 make arm64-test     # 4-CPU MMU/timer/SMP + EL0 user/procs/ABI + 147 core checks
 make arm64-uefi-test # same platform checks through AAVMF
 make arm64-disk-test # arm64 virtio-mmio lfc1/ext4/NTFS (legacy + modern)
@@ -463,10 +463,10 @@ The performance argument is structural: handles are direct indexes, capability c
   ConIn is unavailable after `ExitBootServices`; USB-HID needs a native driver.
 - CLI shell with ramdisk access, writable lfc1 filesystems, line editing,
   history, completion and diagnostic commands.
-- Disk manager over ATA PIO and AHCI on x86_64, and virtio-mmio on arm64
-  (legacy version 1 and modern version 2 transports, polled). Firmware Block
-  I/O remains only for a producer that keeps `fw_services`; current loaders
-  exit boot services, so NVMe/USB storage needs native drivers, with MBR/GPT
+- Disk manager over ATA PIO, AHCI and polled NVMe on x86_64, and virtio-mmio on
+  arm64 (legacy version 1 and modern version 2 transports, polled). Firmware
+  Block I/O remains only for a producer that keeps `fw_services`; current
+  loaders exit boot services, with MBR/GPT
   parsing, an 8-entry read cache, an append-only lfc1 v2 writer, host-side
   `lfc1ck.py` validation/compaction, and capability-backed file handles.
 - Node table with generation-checked handles and refcounts.
@@ -497,6 +497,8 @@ The performance argument is structural: handles are direct indexes, capability c
   SIGALRM and CPU-time timers, cap transfer, service registry,
   dynamic shared-object load, churn and blocked-flow abort), arm64 EL0
   user/procs tests, and arm64 virtio disk tests.
+- x86_64 polled NVMe: QEMU UEFI mounts lfc1 from an NVMe namespace, reads and
+  writes a file (`make nvme-test`).
 - VMware Workstation UEFI and physical x86_64 hardware: `hwtest` passes
   (147 core checks, four-process demo and `init.elf`).
 
@@ -521,8 +523,10 @@ The performance argument is structural: handles are direct indexes, capability c
 - **Writable NTFS/ext4 and journaling.** Only lfc1 is writable. lfc1 sync is
   copy-on-write and append-only, so old trees consume space until compacted on
   the host; there is no journal or automatic garbage collection.
-- **Native NVMe/USB drivers.** x86 UEFI uses native AHCI for SATA. NVMe and USB
-  storage still need native drivers; BIOS has ATA PIO only.
+- **Native USB storage and HID.** x86 UEFI uses native AHCI and polled NVMe
+  for storage; USB storage and USB-HID input still need an xHCI driver. BIOS
+  has ATA PIO only, and the NVMe path currently requires UEFI page tables and
+  512-byte logical namespaces.
 - **USB-HID input on a kernel-native stack.** The UEFI loaders exit boot
   services, so firmware ConIn is gone. Serial and PS/2 input work; USB-only
   keyboards need a future HID driver.
@@ -543,7 +547,7 @@ The performance argument is structural: handles are direct indexes, capability c
   `mincore`, `MADV_PAGEOUT` and raw-block swap are in place; there is no
   guard-page or stack-growth enforcement yet.
 
-Roadmap order: native NVMe/xHCI → journaled lfc1 or writable NTFS/ext4 →
+Roadmap order: xHCI USB-HID/storage → journaled lfc1 or writable NTFS/ext4 →
 per-core scheduler shards → arm64 ACPI/DTB + GICv3 → signed UEFI build.
 
 ## Repository map
