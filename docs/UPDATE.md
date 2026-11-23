@@ -89,6 +89,9 @@ Short notes only. GitHub releases carry the per-commit changes.
 - Recorded a VMware Workstation UEFI run from `Finte-UEFI.vmx`: `[hw] PASS`
   with the 147 checks, procs demo and `init.elf` at 2 vCPUs. The bare-metal
   x86_64 row remains pending.
+- Physical x86_64 `hwtest` passed on real hardware, completing the x86_64
+  hardware-validation row. Arm64 physical boot still needs DTB/ACPI platform
+  discovery.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.

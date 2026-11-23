@@ -68,5 +68,5 @@ device (`hd1`) for the swap test.
 | QEMU q35 (OVMF, AHCI) | OVMF | PASS | `make qemu-uefi-test`, `make qemu-uefi-disk-test` |
 | QEMU virt (AAVMF) | AAVMF | PASS | `make arm64-test`, `make arm64-uefi-test` |
 | VMware Workstation, 2 vCPU | VMware UEFI | PASS | `Finte-UEFI.vmx`: `[hw] PASS`, 147 checks, procs/user OK |
-| Physical x86_64 | | pending | Run `hwtest` and record the serial log |
+| Physical x86_64 | user hardware | PASS | `hwtest` passed on real hardware (user-reported) |
 | Physical arm64 | | blocked | Needs DTB/ACPI platform discovery |
