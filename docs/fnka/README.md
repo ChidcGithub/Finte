@@ -130,16 +130,20 @@ system:
   live in `src/core/process.c`; arch files only own page tables, roots, trap
   frames and EL0/ring-3 entry. Address spaces are refcounted and Flow-owned, so
   flow death frees page tables even without `proc_destroy()`.
-- **The process ABI is still a demo subset.** Fork is copy-on-write,
-  anonymous mappings are capped, signal masks/pending sets cover
-  SIGUSR1/2/SIGCHLD, default TERM/INT/SEGV and basic SIGSTOP/SIGCONT job
-  control, `setpgid`/`getpgrp` back process groups for group `kill` and
-  `waitpid`, SIGALRM, SIGVTALRM and SIGPROF timers work, and the fd
-  table is dynamic with shared open-file descriptions. arm64
-  still lacks ACPI/DTB parsing and GICv3; static-heap fallback remains for
-  direct `-kernel` boot.
+- **The process ABI is functional but bounded.** Fork is copy-on-write,
+  anonymous mappings are capped at 64 pages, the fd table grows to 256 slots
+  with shared open-file descriptions, and demand paging, `mincore`,
+  `MADV_PAGEOUT` and raw-block swap are implemented. Signals cover masks,
+  pending sets, SIGUSR1/2/SIGCHLD, default TERM/INT/SEGV, SIGSTOP/SIGCONT and
+  SIGALRM/SIGVTALRM/SIGPROF timers. Remaining limits are guard pages, stack
+  growth, automatic reclaim under PMM pressure and the full Linux
+  libc/TLS/dynamic-linker layer. arm64 still lacks ACPI/DTB parsing and GICv3;
+  static-heap fallback remains for direct `-kernel` boot.
 - **The Linux persona is experimental.** It demonstrates syscall translation
   and a handful of POSIX-shaped operations. It is not Linux compatibility.
+- **Physical validation is partial.** x86_64 passes `hwtest` on bare metal and
+  under VMware UEFI. Physical arm64 remains blocked on ACPI/DTB platform
+  discovery and GICv3 support.
 - **The native ABI is not frozen.** The verb table is the current internal
   ABI; ring-3 uses a small demo syscall set.
 

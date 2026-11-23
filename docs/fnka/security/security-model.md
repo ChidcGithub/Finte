@@ -119,7 +119,7 @@ map arbitrary physical memory or program arbitrary device registers.
 - No audit log beyond counters.
 - Fixed user virtual layout; no ASLR or KASLR.
 - No side-channel mitigations (cache, timing, speculation).
-- No physical hardware qualification.
+- Physical x86_64 validation has passed; arm64 hardware qualification remains.
 
 ## 7. Security invariants
 

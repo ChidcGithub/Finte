@@ -85,10 +85,12 @@ matrix.
 | Process ABI | Passing (1 CPU) | Passing (4 CPUs) | dynamic fd table with dup/dup2/fcntl and shared open-file descriptions, demand-paged mmap, file-backed mmap, mincore, MADV_PAGEOUT, raw-block swap, COW fork, waitpid, exec, signal masks/SIGUSR1/2/SIGCHLD/defaults, SIGSTOP/SIGCONT job control, process groups via setpgid/getpgrp and group kill/waitpid, SIGALRM/SIGVTALRM/SIGPROF timers, cap transfer, service registry, ET_DYN load, churn, blocked abort |
 | Block storage | Passing | Passing | x86 ATA/AHCI; arm64 virtio-mmio legacy + modern |
 | ISO/IMG boot | Passing | Passing | Local checks and CI arm64 targets |
+| Hardware validation | Passing (bare metal + VMware UEFI) | Pending | x86_64 `hwtest`; arm64 needs ACPI/DTB/GICv3 |
 
 ## 5. Current coverage gaps
 
-- No arm64 GICv3, ACPI/DTB or physical-hardware test.
+- No arm64 GICv3, ACPI/DTB or physical-hardware test. x86_64 bare metal and
+  VMware UEFI `hwtest` pass.
 - No fd-table stress test beyond 256 descriptors or across concurrent closes;
   the 80-file disk test covers the former capability-slot limit.
 - x86_64 process ABI runs on one CPU; arm64 covers 4 CPUs. Simultaneous
@@ -100,7 +102,8 @@ matrix.
 - No user-space driver or IRQ capability test.
 - No IOMMU/DMA isolation test.
 - No unified boot-protocol conformance test.
-- No physical hardware qualification.
+- x86_64 physical and VMware UEFI validation pass; arm64 physical
+  qualification remains.
 - No long-running stress or leak test.
 
 ## 6. What a new feature needs

@@ -497,21 +497,20 @@ The performance argument is structural: handles are direct indexes, capability c
   SIGALRM and CPU-time timers, cap transfer, service registry,
   dynamic shared-object load, churn and blocked-flow abort), arm64 EL0
   user/procs tests, and arm64 virtio disk tests.
+- VMware Workstation UEFI and physical x86_64 hardware: `hwtest` passes
+  (147 core checks, four-process demo and `init.elf`).
 
-**Deliberately not here yet**
+**Open limits and work**
 
-- **A complete process ABI.** A per-process fd table, copy-on-write `fork`,
-  blocking `waitpid` with status and reaping, `exec`, anonymous and file-backed
-  private `mmap`/`munmap`, signal masks, pending sets,
-  SIGUSR1/SIGUSR2/SIGCHLD handlers, default SIGTERM/SIGINT/SIGSEGV actions,
-  SIGSTOP/SIGCONT job control with process groups, `setpgid`/`getpgrp`,
-  group `kill`/`waitpid`, SIGALRM and CPU-time interval timers
-  (`alarm`/`setitimer`/`getitimer`, ITIMER_REAL/VIRTUAL/PROF),
-  plus user-to-user cap transfer are in place. The fd table grows to 256
-  descriptors, dups and fork children share open-file descriptions with
-  refcounted offsets, `fcntl(F_DUPFD)` is supported, file descriptors no
-  longer consume capability slots, and exec preserves descriptors except those
-  marked `FD_CLOEXEC`. Mappings are capped at 64 pages.
+- **Process ABI limits.** The dynamic fd table, shared open-file descriptions,
+  `dup`/`dup2`/`fcntl(F_DUPFD)`, demand-paged anonymous and file-backed
+  mappings, `mincore`, `MADV_PAGEOUT`, raw-block swap, COW `fork`, `waitpid`,
+  `exec`, signal masks/pending sets, SIGSTOP/SIGCONT process groups, SIGALRM
+  and CPU-time timers, and user-to-user cap transfer are in place. Mappings are
+  capped at 64 pages, there is no guard-page or stack-growth enforcement, and
+  swap is explicit (`MADV_PAGEOUT`) rather than automatically reclaimed under
+  PMM pressure. The Linux persona still lacks a full libc/TLS/dynamic-linker
+  layer.
 - **SMP fork/sleep stress.** The x86 process ABI suite is pinned to the BSP and
   the arm64 suite runs 4 CPUs. Simultaneous fork + sleep + migration is not yet
   a claimed stress-tested configuration.
@@ -531,11 +530,10 @@ The performance argument is structural: handles are direct indexes, capability c
   firmware pointers. The GOP framebuffer remains valid memory; no firmware
   IDT or Boot Services calls are used after handoff.
 - **Secure Boot.** The UEFI loader is unsigned; disable Secure Boot or sign it.
-- **Physical-hardware validation.** Verified in QEMU SeaBIOS/OVMF, not yet on a
-  specific physical laptop. `hwtest` runs the self-check, process demo and EL0
-  smoke test on the machine and prints `[hw] PASS`; see
-  [hardware-validation.md](docs/hardware-validation.md) for the procedure and
-  checklist.
+- **Physical arm64 validation.** x86_64 `hwtest` passes on real hardware and
+  under VMware Workstation UEFI; see
+  [hardware-validation.md](docs/hardware-validation.md). Physical arm64 still
+  needs DTB/ACPI platform discovery.
 - **Full Linux ABI.** No libc/TLS setup, no `fork`, no `clone`, no `futex`, no
   dynamic linker.
 - **Arena slice lifetime.** A reserved page slice lasts until the arena is
@@ -546,8 +544,7 @@ The performance argument is structural: handles are direct indexes, capability c
   guard-page or stack-growth enforcement yet.
 
 Roadmap order: native NVMe/xHCI → journaled lfc1 or writable NTFS/ext4 →
-per-core scheduler shards → physical-laptop validation and a signed
-UEFI build.
+per-core scheduler shards → arm64 ACPI/DTB + GICv3 → signed UEFI build.
 
 ## Repository map
 

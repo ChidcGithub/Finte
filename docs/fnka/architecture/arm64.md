@@ -144,12 +144,11 @@ qemu-system-aarch64 -M virt -cpu cortex-a57 -m 512M -nographic \
 
 ## 5. Next priorities
 
-1. Extend the user ABI with general file descriptors for the Linux persona.
-2. ACPI/DTB parsing for platform discovery.
-3. GICv3 support if a target requires it.
-4. Virtio IRQ/feature work and a reusable DMA/block framework.
-5. Cache-maintenance validation for AP startup on real silicon.
-6. Physical-hardware qualification.
+1. ACPI/DTB parsing for platform discovery and physical arm64 boot.
+2. GICv3 support if a target requires it.
+3. Virtio IRQ/feature work and a reusable DMA/block framework.
+4. Cache-maintenance validation for AP startup on real silicon.
+5. Physical arm64 qualification.
 
 Do not claim cross-architecture parity until the corresponding tests exist.
 
@@ -163,8 +162,8 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 - `waitpid` reports exited, stopped and continued children via WUNTRACED and
   WCONTINUED, and accepts `-pgid`/0 selectors. `setpgid`/`getpgrp` and group
   signals via `kill(-pgid)` are supported. The fd table grows dynamically,
-  dups and fork children share open-file descriptions, and exec preserves
-  non-CLOEXEC descriptors.
+  descriptors share refcounted open-file descriptions, and demand paging,
+  `mincore`, `MADV_PAGEOUT` and raw-block swap are implemented.
 - Address-space teardown is Flow-owned; `proc_destroy()` only frees the process
   object. A fork child that is still live when its parent is destroyed is
   aborted and left for flow death rather than synchronously reaped.
@@ -173,9 +172,7 @@ Do not claim cross-architecture parity until the corresponding tests exist.
 - Virtio-mmio is polled, single-queue and QEMU-focused; there is no generic
   block IRQ/DMA framework.
 - QEMU `virt` assumptions are hard-coded in the HAL.
-- ACPI/DTB are passed but not parsed.
-- GICv2 only.
-- No physical hardware qualification.
+- No arm64 ACPI/DTB, GICv3 or physical-hardware validation.
 - Static-heap fallback remains for direct `-kernel` boot.
 
 ## 7. Test evidence
