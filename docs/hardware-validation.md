@@ -55,8 +55,9 @@ device (`hd1`) for the swap test.
 - [ ] UEFI boot reaches the shell.
 - [ ] `hwtest` prints `[hw] PASS`.
 - [ ] Keyboard and serial input both work.
-- [ ] `disks`, `parts`, `mount`, `ls /mnt`, `cat /mnt/hello.txt` work with the
-      machine's SATA/AHCI disk.
+- [ ] `disks`/`parts`/`mount` work with the machine's SATA/AHCI disk.
+- [ ] On a UEFI NVMe machine, `disks` shows the namespace and `mount hd0p1 /mnt`
+      reads/writes it.
 - [ ] `shutdown` powers the machine off.
 - [ ] Capture the serial log and machine model/firmware version.
 
@@ -66,6 +67,7 @@ device (`hd1`) for the swap test.
 | --- | --- | --- | --- |
 | QEMU pc (SeaBIOS, AHCI) | SeaBIOS | PASS | `make qemu-test`, `make qemu-disk-test` |
 | QEMU q35 (OVMF, AHCI) | OVMF | PASS | `make qemu-uefi-test`, `make qemu-uefi-disk-test` |
+| QEMU q35 + NVMe (UEFI) | OVMF | PASS | `make nvme-test`: mount lfc1, read/write/sync |
 | QEMU virt (AAVMF) | AAVMF | PASS | `make arm64-test`, `make arm64-uefi-test` |
 | VMware Workstation, 2 vCPU | VMware UEFI | PASS | `Finte-UEFI.vmx`: `[hw] PASS`, 147 checks, procs/user OK |
 | Physical x86_64 | user hardware | PASS | `hwtest` passed on real hardware (user-reported) |

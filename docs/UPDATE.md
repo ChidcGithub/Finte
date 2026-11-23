@@ -96,6 +96,9 @@ Short notes only. GitHub releases carry the per-commit changes.
   and I/O queues, Identify Controller/Namespace, 4 KiB PRP transfers and HAL
   block registration. QEMU UEFI mounts lfc1 from an NVMe namespace and verifies
   file read and write (`make nvme-test`); CI installs OVMF and runs it.
+- NVMe details: UEFI only, namespace 1, 512-byte logical blocks, one polled I/O
+  queue and 4 KiB PRP transfers. The QEMU test and CI run mount, read, write and
+  sync lfc1 over the NVMe namespace.
 - Fixed the CI boot by pinning x86 builds to `-march=x86-64`; the runner's
   compiler emitted BMI2 `shlx`, which the `qemu64` guest rejects. The ABI
   harness boots the BIOS floppy image and reports boot milestones on COM1.
