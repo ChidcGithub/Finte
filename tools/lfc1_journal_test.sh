@@ -79,6 +79,28 @@ if gen < 2:
     raise SystemExit(1)
 PY
 
+# Two syncs use both journal slots; roll back both superblock updates and
+# verify the newest record replays both files.
+MULTI=build/lfc1-journal-multi.img
+MULTI_CRASH=build/lfc1-journal-multi-crash.img
+cp "$BEFORE" "$MULTI"
+"$FINTE" disk "$MULTI" write hd0p1 first.txt first || exit 1
+"$FINTE" disk "$MULTI" write hd0p1 second.txt second || exit 1
+python3 - "$BEFORE" "$MULTI" "$MULTI_CRASH" <<'PY'
+import struct, sys
+old = open(sys.argv[1], "rb").read()
+new = bytearray(open(sys.argv[2], "rb").read())
+start = struct.unpack_from("<I", new, 446 + 8)[0]
+p = start * 512
+new[p:p + 512] = old[p:p + 512]
+open(sys.argv[3], "wb").write(new)
+PY
+if [ "$("$FINTE" disk "$MULTI_CRASH" cat hd0p1 first.txt 2>&1)" != "first" ] ||
+   [ "$("$FINTE" disk "$MULTI_CRASH" cat hd0p1 second.txt 2>&1)" != "second" ]; then
+    echo "multi-transaction journal replay failed"
+    exit 1
+fi
+
 python3 - "$IMG" "$P1" <<'PY'
 import struct, sys
 img = open(sys.argv[1], "rb").read()
