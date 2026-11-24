@@ -1,9 +1,11 @@
 /* lfc1: compact, read-optimized filesystem.
  *
- * v1 is read-only. v2 adds copy-on-write updates: the mounted tree lives in
- * RAM, sync appends a complete new tree and switches the superblock last. Old
- * trees stay intact if a sync fails. There is no journal, inode table,
- * allocation bitmap or indirect block map. */
+ * v1 is read-only. v2 adds copy-on-write updates and a metadata journal:
+ * the mounted tree lives in RAM, sync appends a complete new tree, commits
+ * a journal record containing the new superblock, then updates the
+ * superblock. Mount replays the newest valid record if it is ahead of the
+ * superblock; invalid/torn records are ignored. The journal is a reserved
+ * tail region, so the live tree never overlaps it. */
 #include "fs_internal.h"
 
 #define LFC1_MAGIC 0x3143464Cu
@@ -15,6 +17,10 @@
 #define LFC1_MAX_DEPTH 24u
 #define LFC1_MAX_DATA (8u * 1024u * 1024u)
 #define LFC1_ENTRY_DIR 1u
+#define LFC1_JOURNAL_MAGIC 0x4A43464Cu
+#define LFC1_JOURNAL_COMMIT 0x54494D43u
+#define LFC1_JOURNAL_SLOTS 2u
+#define LFC1_JOURNAL_SLOT_SECTORS 2u
 
 typedef struct __attribute__((packed)) lfc1_sb {
     uint32_t magic;
@@ -31,11 +37,27 @@ typedef struct __attribute__((packed)) lfc1_sb {
     uint32_t next_free;
     uint32_t generation;
     uint32_t free_sectors;
-    uint8_t reserved[412];
+    uint32_t journal_start;
+    uint32_t journal_sectors;
+    uint32_t journal_sequence;
+    uint32_t journal_flags;
+    uint8_t reserved[396];
     uint32_t checksum;
 } lfc1_sb_t;
 
 _Static_assert(sizeof(lfc1_sb_t) == 512, "lfc1 superblock must be 512 bytes");
+
+typedef struct __attribute__((packed)) lfc1_journal {
+    uint32_t magic;
+    uint32_t sequence;
+    uint32_t sb_size;
+    uint32_t sb_crc;
+    uint8_t sb[512];
+    uint32_t commit;
+    uint32_t crc;
+} lfc1_journal_t;
+
+_Static_assert(sizeof(lfc1_journal_t) <= 1024, "lfc1 journal record too large");
 
 typedef struct __attribute__((packed)) lfc1_dhdr {
     uint32_t magic;
@@ -533,6 +555,98 @@ static int write_files(lfc1_ctx_t *c, lfc1_node_t *n)
     return 0;
 }
 
+static int lfc1_journal_valid(const uint8_t *rec, uint32_t *seq,
+                              uint8_t *sb_out)
+{
+    const lfc1_journal_t *j = (const lfc1_journal_t *)(const void *)rec;
+    if (j->magic != LFC1_JOURNAL_MAGIC || j->sb_size != 512 ||
+        j->commit != LFC1_JOURNAL_COMMIT) {
+        return -1;
+    }
+    if (fnv1a(rec, 532) != j->crc ||
+        fnv1a(j->sb, 508) != j->sb_crc) {
+        return -1;
+    }
+    const lfc1_sb_t *s = (const lfc1_sb_t *)(const void *)j->sb;
+    if (s->magic != LFC1_MAGIC || (s->version != 1 && s->version != 2)) {
+        return -1;
+    }
+    if (s->flags & 1u) {
+        if (fnv1a(j->sb, 508) != s->checksum) {
+            return -1;
+        }
+    }
+    if (seq) {
+        *seq = j->sequence;
+    }
+    if (sb_out) {
+        finte_memcpy(sb_out, j->sb, 512);
+    }
+    return 0;
+}
+
+static int lfc1_journal_replay(fdfs_t *fs, uint8_t *sbraw)
+{
+    const lfc1_sb_t *s = (const lfc1_sb_t *)(const void *)sbraw;
+    if (s->journal_start == 0 || s->journal_sectors < 4 ||
+        (uint64_t)s->journal_start + s->journal_sectors >
+            s->total_sectors ||
+        (uint64_t)s->journal_start * 512u > fs->sectors * 512u) {
+        return 0;
+    }
+    uint32_t best = s->generation;
+    uint8_t best_sb[512];
+    int found = 0;
+    for (uint32_t slot = 0; slot < LFC1_JOURNAL_SLOTS; slot++) {
+        uint8_t rec[1024];
+        uint64_t off = ((uint64_t)s->journal_start +
+                        (uint64_t)slot * LFC1_JOURNAL_SLOT_SECTORS) * 512u;
+        if (fdfs_read_bytes(fs, off, rec, sizeof(rec)) != 0) {
+            continue;
+        }
+        uint32_t seq = 0;
+        uint8_t sb[512];
+        if (lfc1_journal_valid(rec, &seq, sb) != 0 || seq <= best) {
+            continue;
+        }
+        best = seq;
+        finte_memcpy(best_sb, sb, sizeof(best_sb));
+        found = 1;
+    }
+    if (!found) {
+        return 0;
+    }
+    if (fdfs_write_sectors(fs, 0, best_sb, 1) != 0) {
+        return FINTE_ERR_IO;
+    }
+    finte_memcpy(sbraw, best_sb, 512);
+    return 0;
+}
+
+static int lfc1_journal_commit(lfc1_ctx_t *c, const lfc1_sb_t *nsb)
+{
+    if (c->sb.journal_start == 0 || c->sb.journal_sectors < 4) {
+        return 0;
+    }
+    uint8_t rec[1024];
+    finte_memset(rec, 0, sizeof(rec));
+    lfc1_journal_t *j = (lfc1_journal_t *)(void *)rec;
+    j->magic = LFC1_JOURNAL_MAGIC;
+    j->sequence = nsb->generation;
+    j->sb_size = 512;
+    j->sb_crc = fnv1a((const uint8_t *)nsb, 508);
+    finte_memcpy(j->sb, nsb, 512);
+    j->commit = LFC1_JOURNAL_COMMIT;
+    j->crc = fnv1a(rec, 532);
+    uint32_t slot = nsb->generation & 1u;
+    uint64_t off = ((uint64_t)c->sb.journal_start +
+                    (uint64_t)slot * LFC1_JOURNAL_SLOT_SECTORS) * 512u;
+    if (fdfs_write_bytes(c->fs, off, rec, sizeof(rec)) != 0) {
+        return FINTE_ERR_IO;
+    }
+    return 0;
+}
+
 static int lfc1_sync(void *ctx)
 {
     lfc1_ctx_t *c = (lfc1_ctx_t *)ctx;
@@ -543,8 +657,10 @@ static int lfc1_sync(void *ctx)
         return 0;
     }
     lfc1_node_t *root = &c->nodes[0];
+    uint32_t limit = c->sb.journal_start ? c->sb.journal_start
+                                         : c->sb.total_sectors;
     uint32_t cur = align4k(c->sb.next_free);
-    if (cur == 0xFFFFFFFFu || cur >= c->sb.total_sectors) {
+    if (cur == 0xFFFFFFFFu || cur >= limit) {
         return FINTE_ERR_NOMEM;
     }
     int rc = assign_dirs(root, &cur);
@@ -552,7 +668,7 @@ static int lfc1_sync(void *ctx)
         rc = assign_files(root, &cur);
     }
     uint32_t next = align4k(cur);
-    if (rc != 0 || next == 0xFFFFFFFFu || next > c->sb.total_sectors) {
+    if (rc != 0 || next == 0xFFFFFFFFu || next > limit) {
         return FINTE_ERR_NOMEM;
     }
     rc = write_dirs(c, root);
@@ -562,17 +678,23 @@ static int lfc1_sync(void *ctx)
     if (rc != 0) {
         return rc;
     }
-    c->sb.root_start = root->start;
-    c->sb.root_size = root->blob_size;
-    c->sb.next_free = next;
-    c->sb.generation++;
-    c->sb.free_sectors = c->sb.total_sectors - next;
-    c->sb.checksum = fnv1a((const uint8_t *)&c->sb, 508);
+    lfc1_sb_t nsb = c->sb;
+    nsb.root_start = root->start;
+    nsb.root_size = root->blob_size;
+    nsb.next_free = next;
+    nsb.generation++;
+    nsb.free_sectors = limit - next;
+    nsb.journal_sequence = nsb.generation;
+    nsb.checksum = fnv1a((const uint8_t *)&nsb, 508);
+    if (lfc1_journal_commit(c, &nsb) != 0) {
+        return FINTE_ERR_IO;
+    }
     uint8_t sb[512];
-    finte_memcpy(sb, &c->sb, sizeof(sb));
+    finte_memcpy(sb, &nsb, sizeof(sb));
     if (fdfs_write_sectors(c->fs, 0, sb, 1) != 0) {
         return FINTE_ERR_IO;
     }
+    c->sb = nsb;
     c->dirty = 0;
     return 0;
 }
@@ -588,6 +710,13 @@ static int lfc1_mount(fdfs_t *fs)
         (s->version != 1 && s->version != 2)) {
         return FINTE_ERR_TYPE;
     }
+    if (s->version >= 2 && s->journal_start != 0) {
+        int jr = lfc1_journal_replay(fs, sbraw);
+        if (jr != 0) {
+            return jr;
+        }
+        s = (const lfc1_sb_t *)sbraw;
+    }
     if (s->flags & 1u) {
         if (fnv1a(sbraw, 508) != rd32(sbraw + 508)) {
             return FINTE_ERR_IO;
@@ -598,7 +727,11 @@ static int lfc1_mount(fdfs_t *fs)
         s->total_sectors == 0 || s->total_sectors > fs->sectors ||
         s->root_size < sizeof(lfc1_dhdr_t) || s->root_size > LFC1_DIR_MAX ||
         (uint64_t)s->root_start * 512u + s->root_size >
-            (uint64_t)s->total_sectors * 512u) {
+            (uint64_t)s->total_sectors * 512u ||
+        (s->journal_start != 0 &&
+         (s->journal_sectors < 4 ||
+          (uint64_t)s->journal_start + s->journal_sectors >
+              s->total_sectors))) {
         return FINTE_ERR_IO;
     }
     lfc1_ctx_t *c = (lfc1_ctx_t *)hal_pages_alloc(sizeof(*c));
@@ -635,8 +768,17 @@ static int lfc1_mount(fdfs_t *fs)
     if (c->sb.next_free < end) {
         c->sb.next_free = end;
     }
-    if (c->sb.next_free > c->sb.total_sectors) {
-        c->sb.next_free = c->sb.total_sectors;
+    uint32_t limit = c->sb.journal_start ? c->sb.journal_start
+                                         : c->sb.total_sectors;
+    if (c->sb.next_free > limit) {
+        node_free_tree(c, &c->nodes[0]);
+        hal_pages_free(c, sizeof(*c));
+        return FINTE_ERR_IO;
+    }
+    if (c->sb.journal_start &&
+        (c->sb.free_sectors > limit - c->sb.next_free ||
+         c->sb.free_sectors == 0)) {
+        c->sb.free_sectors = limit - c->sb.next_free;
     }
     fs->ctx = c;
     return 0;

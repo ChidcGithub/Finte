@@ -45,6 +45,7 @@ make qemu-disk-test       # BIOS + ATA PIO + lfc1/ext4/NTFS
 make qemu-uefi-disk-test  # UEFI + AHCI + filesystems
 make abi-test             # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn
 make nvme-test            # x86_64 UEFI + polled NVMe + lfc1 mount/read/write
+make journal-test         # lfc1 journal replay and torn-record rejection
 make xhci-test            # x86_64 UEFI + USB HID keyboard + USB BOT storage
 make arm64-test           # arm64 4 CPUs: MMU/timer/SMP + EL0 user/procs/ABI + core checks
 make arm64-uefi-test      # same arm64 platform checks under AAVMF

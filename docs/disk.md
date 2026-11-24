@@ -166,13 +166,15 @@ features are rejected at mount time.
 **lfc1** is Finte's own format. It is deliberately tiny and optimized for
 sequential read speed:
 
-- no inode table, journal, allocation bitmap or indirect blocks;
+- no inode table, allocation bitmap or indirect blocks; a small reserved tail
+  journal records superblock commits;
 - one contiguous extent per file;
 - 16-byte directory entries sorted by name;
 - 4 KiB metadata alignment; 512-byte sector addressing;
 - a single FNV-1a checksum over the superblock.
 
-Version 1 is read-only. Version 2 adds copy-on-write updates. Mounting loads the
+Version 1 is read-only. Version 2 adds copy-on-write updates and a two-slot
+write-ahead journal for the superblock commit. Mounting loads the
 whole tree into RAM: at most **512 nodes**, **8 MiB of file data**, **64 KiB per
 directory blob**, depth 24, and 255-byte names.
 
@@ -236,11 +238,16 @@ Writes are copy-on-write and append-only:
 1. `create`, `write`, `truncate`, `mkdir`, `unlink` and `rename` update the
    in-memory tree only.
 2. `sync` assigns fresh extents starting at `next_free`, writes every directory
-   blob and file extent, then writes a new superblock with a higher generation
-   and the new `next_free`.
-3. The superblock write is last. If a sync fails before it, the previous tree
-   and superblock remain valid; the partial append is simply ignored.
-4. Mount recomputes the append cursor from the live tree, so it never overwrites
+   blob and file extent, then prepares a new superblock with a higher
+   generation and the new `next_free`.
+3. The new superblock is written to a journal slot and committed with an
+   FNV-1a record checksum; only then is the real superblock updated. The next
+   mount replays a valid record whose sequence is ahead of the superblock and
+   ignores torn or stale records.
+4. The superblock write is last. If a sync fails before it, the previous tree
+   and superblock remain valid; the partial append is ignored unless a complete
+   newer journal record exists.
+5. Mount recomputes the append cursor from the live tree, so it never overwrites
    data it just loaded.
 
 Old trees are not reclaimed automatically. Every sync consumes space until the
@@ -327,8 +334,10 @@ partitions and deterministic file contents. A GPT image can be made with
 ## Limits and next steps
 
 - Only **lfc1** is writable. NTFS and ext4 are read-only.
-- lfc1 has no journal, permissions, timestamps, hard links or symlinks. Sync is
-  atomic at the superblock, but an interrupted sync leaves the previous tree.
+- lfc1 has a two-slot superblock journal with checksum/replay, but no
+  permissions, timestamps, hard links, symlinks or data-block journal. Sync is
+  atomic at the superblock; an interrupted sync leaves the previous tree unless
+  a complete newer journal record exists.
 - Every sync appends a full tree; compact with `tools/lfc1ck.py --compact`.
 - NVMe is available through the UEFI polled single-queue driver (512-byte
   logical namespaces). USB mass storage is available through the UEFI xHCI

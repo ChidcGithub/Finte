@@ -155,12 +155,16 @@ def pack_image(root, out, label, min_size=0, uuid=None, generation=1):
     data_start = align4k(cursor * SECTOR) // SECTOR
     cursor = assign_files(root, data_start)
     used = align4k(cursor * SECTOR)
-    image_size = used if not min_size else max(used, min_size)
+    JOURNAL_SECTORS = 4
+    image_size = max(align4k(used) + JOURNAL_SECTORS * SECTOR, min_size)
     image_size = align4k(image_size)
     if image_size > 0xFFFFFFFF * SECTOR:
         raise ValueError("image exceeds lfc1 32-bit sector limit")
     if image_size < 16 * 1024:
         image_size = 16 * 1024
+    journal_start = image_size // SECTOR - JOURNAL_SECTORS
+    if journal_start * SECTOR < used:
+        raise ValueError("image too small for lfc1 journal")
 
     serialize_all(root)
     image = bytearray(image_size)
@@ -177,7 +181,8 @@ def pack_image(root, out, label, min_size=0, uuid=None, generation=1):
     sb[60:76] = uuid
     struct.pack_into("<Q", sb, 76, 0)       # reproducible builds
     struct.pack_into("<III", sb, 84, next_free, generation,
-                     image_size // SECTOR - next_free)
+                     journal_start - next_free)
+    struct.pack_into("<IIII", sb, 96, journal_start, JOURNAL_SECTORS, 0, 0)
     struct.pack_into("<I", sb, 508, fnv1a(sb[:508]))
     image[:SECTOR] = sb
 

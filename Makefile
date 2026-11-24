@@ -82,7 +82,8 @@ ARM64_OBJ := $(patsubst %.c,$(BUILD)/arm64/obj/%.o,$(ARM64_SRC)) \
 
 .PHONY: all host kernel kernel-elf image uefi bootloader initrd test selfcheck \
         bench demo compat qemu qemu-uefi qemu-uefi-test qemu-kernel qemu-test \
-        disk-image disk-test qemu-disk-test qemu-uefi-disk-test user clean FORCE \
+        disk-image disk-test qemu-disk-test qemu-uefi-disk-test journal-test \
+        user clean FORCE \
         arm64 arm64-test arm64-uefi-test arm64-disk-test arm64-uefi-disk-test \
         abi-test qemu-arm64 images iso vmware nvme-test xhci-test
 
@@ -396,6 +397,9 @@ disk-image: $(BUILD)/disk-test.img
 
 disk-test: host $(BUILD)/disk-test.img
 	bash tools/disk_test.sh
+
+journal-test: host
+	bash tools/lfc1_journal_test.sh
 
 qemu-disk-test: image $(BUILD)/disk-test.img
 	bash tools/qemu_disk_test.sh bios

@@ -117,16 +117,27 @@ def main():
     root_start = rd32(sb, 16)
     root_size = rd32(sb, 20)
     next_free = rd32(sb, 84)
+    journal_start = rd32(sb, 96)
+    journal_sectors = rd32(sb, 100)
     label = sb[28:60].split(b"\0", 1)[0]
     uuid = sb[60:76]
     if total > len(img) // SECTOR:
         errors.append("filesystem is larger than the image")
+    if journal_start:
+        if journal_sectors < 4 or journal_start + journal_sectors > total:
+            errors.append("bad lfc1 journal extent")
+        elif journal_start * SECTOR < 16 * 1024:
+            errors.append("lfc1 journal overlaps metadata")
     ranges = []
     root = parse_dir(img, root_start, root_size, 0, ranges, errors)
     if root is not None:
         used_end = max((b for _, b, _ in ranges), default=0)
         if version >= 2 and next_free < used_end:
             errors.append("next_free points into the live tree")
+        if journal_start and used_end > journal_start:
+            errors.append("live tree overlaps lfc1 journal")
+        if journal_start and next_free > journal_start:
+            errors.append("next_free overlaps lfc1 journal")
         check_ranges(ranges, errors)
     if args.list and root is not None:
         mklfc1.print_tree(root)

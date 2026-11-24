@@ -469,7 +469,7 @@ The performance argument is structural: handles are direct indexes, capability c
   transports, polled). Firmware
   Block I/O remains only for a producer that keeps `fw_services`; current
   loaders exit boot services, with MBR/GPT
-  parsing, an 8-entry read cache, an append-only lfc1 v2 writer, host-side
+  parsing, an 8-entry read cache, a journaled append-only lfc1 v2 writer, host-side
   `lfc1ck.py` validation/compaction, and capability-backed file handles.
 - Node table with generation-checked handles and refcounts.
 - Capability install/drop/dup/grant and cap transfer in messages.
@@ -524,9 +524,10 @@ The performance argument is structural: handles are direct indexes, capability c
   static default affinity, verbs take one global core lock, and work stealing
   is currently disabled. `finte_sched_migrate()` can move flows between CPUs;
   there is no general load balancer or Parallel Flow model yet.
-- **Writable NTFS/ext4 and journaling.** Only lfc1 is writable. lfc1 sync is
-  copy-on-write and append-only, so old trees consume space until compacted on
-  the host; there is no journal or automatic garbage collection.
+- **Writable NTFS/ext4 and data-block journaling.** Only lfc1 is writable.
+  lfc1 sync is copy-on-write and append-only with a superblock journal, so old
+  trees consume space until compacted on the host; file and directory data are
+  not journaled, and there is no automatic garbage collection.
 - **Native USB storage and HID.** x86 UEFI has a polled xHCI controller with a
   boot HID keyboard and bulk-only USB mass storage (BOT/SCSI), tested on the
   USB2 port set. USB hubs, SuperSpeed companion descriptors and non-boot HID
@@ -552,7 +553,7 @@ The performance argument is structural: handles are direct indexes, capability c
   `mincore`, `MADV_PAGEOUT` and raw-block swap are in place; there is no
   guard-page or stack-growth enforcement yet.
 
-Roadmap order: journaled lfc1 or writable NTFS/ext4 → per-core scheduler
+Roadmap order: writable NTFS/ext4 or lfc1 data-block journal → per-core scheduler
 shards → arm64 ACPI/DTB + GICv3 → signed UEFI build.
 
 ## Repository map

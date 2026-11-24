@@ -102,6 +102,13 @@ Short notes only. GitHub releases carry the per-commit changes.
   mounts/reads/writes lfc1 over `usb-storage` (`make xhci-test`, CI). Current
   scope is the USB2 port set, boot keyboard reports and BOT/SCSI; hubs and
   SuperSpeed companion descriptors are not handled.
+- Added an lfc1 write-ahead superblock journal. lfc1 reserves a four-sector tail
+  region with two 1 KiB records; sync writes tree/data, commits a checksummed
+  record with the new superblock, then updates sector 0. Mount replays the
+  newest valid record if it is ahead of the superblock and ignores stale or
+  torn records. `make journal-test` simulates a crash between commit and
+  superblock write, verifies replay, then corrupts the record and verifies the
+  old tree is used.
 - NVMe details: UEFI only, namespace 1, 512-byte logical blocks, one polled I/O
   queue and 4 KiB PRP transfers. The QEMU test and CI run mount, read, write and
   sync lfc1 over the NVMe namespace.

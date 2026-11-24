@@ -489,7 +489,8 @@ The disk manager is a thin layer over block devices and filesystems:
   `FINTE_VERB_FILE_READ` and `FINTE_VERB_FILE_WRITE` check the capability before
   calling the filesystem, so the shell cannot bypass its own authority.
 
-There is no journal, block allocator, VFS inode cache or page cache. `docs/disk.md`
+There is no block allocator, VFS inode cache or page cache; lfc1 has a small
+superblock journal. `docs/disk.md`
 contains the command reference, the on-disk lfc1 layout and the exact NTFS/ext4
 coverage.
 

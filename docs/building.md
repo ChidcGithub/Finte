@@ -62,6 +62,7 @@ make qemu-test      # BIOS CLI boot test
 make qemu-uefi-test # UEFI CLI boot test
 make abi-test       # x86_64 1-CPU fd/mmap/filemmap/cow-fork/waitpid/exec/signal/sigset/job/pgroup/alarm/cputime/fdtab/vm/cap/churn suite
 make nvme-test      # x86_64 UEFI polled NVMe read/write + lfc1 mount
+make journal-test   # lfc1 crash journal replay and torn-record rejection
 make xhci-test      # x86_64 UEFI xHCI USB keyboard + USB storage
 make arm64-test     # arm64 4-CPU MMU/GIC/timer/SMP + EL0 user/procs/ABI
 make arm64-uefi-test # same arm64 checks under AAVMF
@@ -323,7 +324,8 @@ A Windows process is holding the directory. Close QEMU/editors or remove
 - Host disk manager: lfc1/ext4/NTFS on a three-partition MBR image, nested
   directories, 20 KiB/40 KiB read checksums, GPT listing and reads.
 - Writable lfc1: create, write, mkdir, cp, sync, umount, remount and read back;
-  `lfc1ck.py` validation and `--compact`.
+  `lfc1ck.py` validation and `--compact`; crash journal replay and torn-record
+  rejection via `make journal-test`.
 - BIOS disk manager: ATA PIO, MBR, mount/read/fsinfo/umount for lfc1, ext4 and
   NTFS from `hd1`; writable lfc1.
 - WSL Ubuntu 26.04 / OVMF 2025.11: UEFI CLI boot test, boot protocol v1 with
