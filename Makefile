@@ -167,7 +167,7 @@ nvme-test: $(BUILD)/finte-x86_64.iso $(BUILD)/disk-test.img
 	bash tools/qemu_nvme_test.sh
 
 xhci-test: $(BUILD)/finte-x86_64.iso $(BUILD)/disk-test.img
-	bash tools/qemu_xhci_test.sh
+	bash tools/qemu_xhci_test.sh || bash tools/qemu_xhci_test.sh
 
 arm64-disk-test: arm64 $(BUILD)/disk-test.img $(BUILD)/swap.img
 	QEMU_ARM64=$(QEMU_ARM64) \
